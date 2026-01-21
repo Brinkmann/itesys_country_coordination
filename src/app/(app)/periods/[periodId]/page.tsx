@@ -8,15 +8,19 @@ import { onAuthStateChanged, User } from 'firebase/auth';
 import { getPeriod } from '@/lib/actions/periods';
 import { getArtefactsByPeriod, createArtefact, deleteArtefact } from '@/lib/actions/artefacts';
 import { getActionsByPeriod, getCarryOverActions, createAction, updateAction, deleteAction } from '@/lib/actions/actions';
-import { Period, Artefact, ActionItem, ArtefactType, formatPeriodLabel, isPeriodCurrent } from '@/lib/types';
+import { extractTextFromArtefact } from '@/lib/services/textExtraction';
+import { generateAgenda, getLatestAgenda } from '@/lib/services/agendaGeneration';
+import { Period, Artefact, ActionItem, ArtefactType, AgendaModel, formatPeriodLabel } from '@/lib/types';
 
-type ArtefactTabKey = 'finance' | 'productivity' | 'minutes';
+type ArtefactTabKey = 'finance' | 'productivity' | 'minutes' | 'other';
 type TabKey = ArtefactTabKey | 'agenda' | 'actions';
 
-const ARTEFACT_TABS: { key: ArtefactTabKey; label: string; title: string }[] = [
-  { key: 'finance', label: 'Finance', title: 'Financial Artefacts' },
-  { key: 'productivity', label: 'Productivity', title: 'Productivity Reports' },
-  { key: 'minutes', label: 'Minutes', title: 'Meeting Minutes' },
+// Updated labels to match user's terminology
+const ARTEFACT_TABS: { key: ArtefactTabKey; label: string; title: string; description: string }[] = [
+  { key: 'finance', label: 'Management Report', title: 'Management Report', description: 'Upload financial reports and management summaries. The AI will extract key metrics and trends.' },
+  { key: 'productivity', label: 'Protime', title: 'Protime Reports', description: 'Upload Protime reports with employee profitability and utilization data.' },
+  { key: 'minutes', label: 'Meeting Minutes', title: 'Meeting Minutes', description: 'Upload previous meeting minutes or transcripts. The AI will extract decisions and action items.' },
+  { key: 'other', label: 'Other', title: 'Other Documents', description: 'Upload any additional documents relevant to the board meeting.' },
 ];
 
 export default function PeriodWorkspacePage() {
@@ -32,6 +36,9 @@ export default function PeriodWorkspacePage() {
   const [carryOverActions, setCarryOverActions] = useState<ActionItem[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('finance');
   const [uploading, setUploading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [agenda, setAgenda] = useState<{ contentJson: AgendaModel; contentMd: string; status: string } | null>(null);
+  const [extractionPreviews, setExtractionPreviews] = useState<string[]>([]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -46,11 +53,12 @@ export default function PeriodWorkspacePage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [periodData, artefactsData, actionsData, carryOverData] = await Promise.all([
+      const [periodData, artefactsData, actionsData, carryOverData, agendaData] = await Promise.all([
         getPeriod(periodId),
         getArtefactsByPeriod(periodId),
         getActionsByPeriod(periodId),
         getCarryOverActions(periodId),
+        getLatestAgenda(periodId),
       ]);
 
       if (!periodData) {
@@ -62,6 +70,26 @@ export default function PeriodWorkspacePage() {
       setArtefacts(artefactsData);
       setActions(actionsData);
       setCarryOverActions(carryOverData);
+
+      if (agendaData) {
+        setAgenda({
+          contentJson: agendaData.contentJson,
+          contentMd: agendaData.contentMd,
+          status: agendaData.status,
+        });
+      }
+
+      // Generate preview snippets from parsed text
+      const previews: string[] = [];
+      for (const art of artefactsData) {
+        if (art.parsedText && previews.length < 3) {
+          const snippet = art.parsedText.slice(0, 200).trim();
+          if (snippet) {
+            previews.push(`From ${art.filename}: "${snippet}..."`);
+          }
+        }
+      }
+      setExtractionPreviews(previews);
     } catch (error) {
       console.error('Error loading data:', error);
     }
@@ -79,43 +107,105 @@ export default function PeriodWorkspacePage() {
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
-        const reader = new FileReader();
-        reader.onload = async () => {
-          const base64 = (reader.result as string).split(',')[1];
-          const result = await createArtefact(
-            periodId,
-            type,
-            file.name,
-            base64,
-            file.type,
-            user.uid
-          );
+        // Read file as base64
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            resolve(result.split(',')[1]);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
 
-          if (!result.success) {
-            alert(result.error || 'Failed to upload file');
-          }
-        };
-        reader.readAsDataURL(file);
+        // Upload artefact
+        const result = await createArtefact(
+          periodId,
+          type,
+          file.name,
+          base64,
+          file.type,
+          user.uid
+        );
+
+        if (!result.success) {
+          alert(result.error || 'Failed to upload file');
+          continue;
+        }
+
+        // Extract text from the uploaded file
+        if (result.artefactId) {
+          const storagePath = `artefacts/${periodId}/${type}/${result.artefactId}/${file.name}`;
+          await extractTextFromArtefact(result.artefactId, storagePath, file.type);
+        }
       }
 
-      // Reload artefacts after a short delay
-      setTimeout(loadData, 1000);
+      // Reload data to show new artefacts
+      await loadData();
     } catch (error) {
       console.error('Error uploading file:', error);
+      alert('Error uploading file. Please try again.');
     } finally {
       setUploading(false);
     }
   };
 
   const handleDeleteArtefact = async (artefactId: string) => {
-    if (!confirm('Are you sure you want to delete this artefact?')) return;
+    if (!confirm('Are you sure you want to delete this document?')) return;
 
     const result = await deleteArtefact(artefactId);
     if (result.success) {
       loadData();
     } else {
-      alert(result.error || 'Failed to delete artefact');
+      alert(result.error || 'Failed to delete document');
     }
+  };
+
+  const handleGenerateAgenda = async () => {
+    if (!user) return;
+
+    // Check if there are artefacts with parsed text
+    const artefactsWithText = artefacts.filter((a) => a.parsedText);
+    if (artefactsWithText.length === 0) {
+      alert('Please upload at least one document before generating an agenda. Make sure the documents have been processed.');
+      return;
+    }
+
+    setGenerating(true);
+    try {
+      const result = await generateAgenda(
+        periodId,
+        artefacts,
+        carryOverActions,
+        'en',
+        true,
+        user.uid
+      );
+
+      if (result.success) {
+        await loadData();
+        setActiveTab('agenda');
+      } else {
+        alert(result.error || 'Failed to generate agenda');
+      }
+    } catch (error) {
+      console.error('Error generating agenda:', error);
+      alert('Error generating agenda. Please try again.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleExportMarkdown = () => {
+    if (!agenda?.contentMd) return;
+
+    const blob = new Blob([agenda.contentMd], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `agenda-${periodId}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const getArtefactsByType = (type: ArtefactType) => {
@@ -127,10 +217,24 @@ export default function PeriodWorkspacePage() {
       getArtefactsByType('finance').length > 0,
       getArtefactsByType('productivity').length > 0,
       getArtefactsByType('minutes').length > 0,
-      false, // agenda draft
-      false, // final agenda
+      agenda !== null,
+      agenda?.status === 'final',
     ];
     return { completed: tasks.filter(Boolean).length, total: tasks.length };
+  };
+
+  const getMissingRequirements = () => {
+    const missing: string[] = [];
+    if (getArtefactsByType('finance').length === 0) {
+      missing.push('Management Report not uploaded');
+    }
+    if (getArtefactsByType('productivity').length === 0) {
+      missing.push('Protime report not uploaded');
+    }
+    if (getArtefactsByType('minutes').length === 0) {
+      missing.push('Meeting minutes not uploaded');
+    }
+    return missing;
   };
 
   if (loading) {
@@ -146,7 +250,7 @@ export default function PeriodWorkspacePage() {
   }
 
   const progress = getTaskProgress();
-  const isCurrent = isPeriodCurrent(periodId);
+  const missingRequirements = getMissingRequirements();
 
   return (
     <div>
@@ -172,19 +276,36 @@ export default function PeriodWorkspacePage() {
                 />
               </div>
             </div>
-            <button className="btn btn-secondary">
+            <button
+              className="btn btn-secondary"
+              onClick={handleExportMarkdown}
+              disabled={!agenda?.contentMd}
+            >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                 <polyline points="7 10 12 15 17 10" />
                 <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
-              Export Package
+              Export Markdown
             </button>
-            <button className="btn btn-primary">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-              </svg>
-              Generate Agenda
+            <button
+              className="btn btn-primary"
+              onClick={handleGenerateAgenda}
+              disabled={generating || artefacts.length === 0}
+            >
+              {generating ? (
+                <>
+                  <div className="loading-spinner" style={{ width: 16, height: 16 }} />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                  </svg>
+                  Generate Agenda
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -199,6 +320,11 @@ export default function PeriodWorkspacePage() {
               onClick={() => setActiveTab(tab.key)}
             >
               {tab.label}
+              {getArtefactsByType(tab.key).length > 0 && (
+                <span style={{ marginLeft: 6, opacity: 0.6 }}>
+                  ({getArtefactsByType(tab.key).length})
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -208,53 +334,50 @@ export default function PeriodWorkspacePage() {
             onClick={() => setActiveTab('agenda')}
           >
             Agenda Editor
+            {agenda && (
+              <span style={{ marginLeft: 6 }} className={`badge ${agenda.status === 'final' ? 'badge-final' : 'badge-draft'}`}>
+                {agenda.status}
+              </span>
+            )}
           </button>
           <button
             className={`tab ${activeTab === 'actions' ? 'active' : ''}`}
             onClick={() => setActiveTab('actions')}
           >
             Actions
+            {(actions.length + carryOverActions.length) > 0 && (
+              <span style={{ marginLeft: 6, opacity: 0.6 }}>
+                ({actions.length + carryOverActions.length})
+              </span>
+            )}
           </button>
         </div>
       </div>
 
       <div className="workspace-content">
         <div className="workspace-main">
-          {activeTab === 'finance' && (
-            <ArtefactSection
-              title="Financial Artefacts"
-              type="finance"
-              artefacts={getArtefactsByType('finance')}
-              onUpload={(files) => handleFileUpload(files, 'finance')}
-              onDelete={handleDeleteArtefact}
-              uploading={uploading}
-            />
-          )}
-
-          {activeTab === 'productivity' && (
-            <ArtefactSection
-              title="Productivity Reports"
-              type="productivity"
-              artefacts={getArtefactsByType('productivity')}
-              onUpload={(files) => handleFileUpload(files, 'productivity')}
-              onDelete={handleDeleteArtefact}
-              uploading={uploading}
-            />
-          )}
-
-          {activeTab === 'minutes' && (
-            <ArtefactSection
-              title="Meeting Minutes"
-              type="minutes"
-              artefacts={getArtefactsByType('minutes')}
-              onUpload={(files) => handleFileUpload(files, 'minutes')}
-              onDelete={handleDeleteArtefact}
-              uploading={uploading}
-            />
+          {ARTEFACT_TABS.map((tab) =>
+            activeTab === tab.key ? (
+              <ArtefactSection
+                key={tab.key}
+                title={tab.title}
+                description={tab.description}
+                type={tab.key}
+                artefacts={getArtefactsByType(tab.key)}
+                onUpload={(files) => handleFileUpload(files, tab.key)}
+                onDelete={handleDeleteArtefact}
+                uploading={uploading}
+              />
+            ) : null
           )}
 
           {activeTab === 'agenda' && (
-            <AgendaEditor periodId={periodId} />
+            <AgendaEditor
+              periodId={periodId}
+              agenda={agenda}
+              onRegenerate={handleGenerateAgenda}
+              generating={generating}
+            />
           )}
 
           {activeTab === 'actions' && (
@@ -273,16 +396,15 @@ export default function PeriodWorkspacePage() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
               </svg>
-              AI EXTRACTION PREVIEW
+              DOCUMENT PREVIEW
             </div>
             <div className="preview-panel-content">
-              {artefacts.length === 0 ? (
-                <p style={{ color: '#9ca3af' }}>Upload documents to see AI-extracted insights.</p>
+              {extractionPreviews.length === 0 ? (
+                <p style={{ color: '#9ca3af' }}>Upload documents to see extracted content previews.</p>
               ) : (
-                <>
-                  <p>&quot;Revenue increased by <span className="preview-highlight">15% YoY</span> due to strong enterprise adoption.&quot;</p>
-                  <p>&quot;Operating expenses remained flat despite headcount growth.&quot;</p>
-                </>
+                extractionPreviews.map((preview, i) => (
+                  <p key={i} style={{ fontSize: 13, marginBottom: 12 }}>{preview}</p>
+                ))
               )}
             </div>
           </div>
@@ -294,19 +416,21 @@ export default function PeriodWorkspacePage() {
                 <line x1="12" y1="8" x2="12" y2="12" />
                 <line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
-              REQUIRED ACTIONS
+              CHECKLIST
             </div>
-            {artefacts.length === 0 ? (
-              <p style={{ color: '#9ca3af', fontSize: '14px' }}>No pending actions.</p>
+            {missingRequirements.length === 0 ? (
+              <p style={{ color: '#059669', fontSize: 14 }}>All required documents uploaded!</p>
             ) : (
               <div>
-                <div className="action-item-row">
-                  <div className="action-item-indicator required" />
-                  <div className="action-item-content">
-                    <h4>Missing Q4 Cash Flow Statement</h4>
-                    <p>Required for Financial Review section</p>
+                {missingRequirements.map((req, i) => (
+                  <div key={i} className="action-item-row">
+                    <div className="action-item-indicator required" />
+                    <div className="action-item-content">
+                      <h4>{req}</h4>
+                      <p>Required for agenda generation</p>
+                    </div>
                   </div>
-                </div>
+                ))}
               </div>
             )}
           </div>
@@ -318,6 +442,7 @@ export default function PeriodWorkspacePage() {
 
 function ArtefactSection({
   title,
+  description,
   type,
   artefacts,
   onUpload,
@@ -325,6 +450,7 @@ function ArtefactSection({
   uploading,
 }: {
   title: string;
+  description: string;
   type: ArtefactType;
   artefacts: Artefact[];
   onUpload: (files: FileList) => void;
@@ -357,15 +483,6 @@ function ArtefactSection({
           </svg>
           {title}
         </div>
-        {artefacts.length > 0 && (
-          <div className="artefact-search">
-            <svg className="artefact-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input type="text" placeholder="Search files..." />
-          </div>
-        )}
       </div>
 
       {artefacts.length > 0 && (
@@ -373,20 +490,36 @@ function ArtefactSection({
           {artefacts.map((artefact) => (
             <div key={artefact.id} className="artefact-item">
               <div className="artefact-item-icon">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                </svg>
+                {artefact.parsedText ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                    <polyline points="22 4 12 14.01 9 11.01" />
+                  </svg>
+                ) : artefact.parseError ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="15" y1="9" x2="9" y2="15" />
+                    <line x1="9" y1="9" x2="15" y2="15" />
+                  </svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                )}
               </div>
               <div className="artefact-item-info">
                 <div className="artefact-item-name">{artefact.filename || 'Note'}</div>
                 <div className="artefact-item-meta">
-                  {artefact.fileSize ? `${Math.round(artefact.fileSize / 1024)} KB` : 'Text note'} &middot;{' '}
+                  {artefact.fileSize ? `${Math.round(artefact.fileSize / 1024)} KB` : 'Text note'}
+                  {' · '}
                   {new Date(artefact.createdAt).toLocaleDateString()}
+                  {artefact.parsedText && ' · Processed'}
+                  {artefact.parseError && ' · Error processing'}
                 </div>
               </div>
               <div className="artefact-item-actions">
-                <button className="btn btn-ghost" onClick={() => onDelete(artefact.id)}>
+                <button className="btn btn-ghost" onClick={() => onDelete(artefact.id)} title="Delete">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <polyline points="3 6 5 6 21 6" />
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -425,13 +558,58 @@ function ArtefactSection({
           )}
         </div>
         <h3>Upload {title}</h3>
-        <p>Drag & drop PDF or DOCX files here. Our AI will automatically extract key metrics and create agenda items.</p>
+        <p>{description}</p>
       </div>
     </div>
   );
 }
 
-function AgendaEditor({ periodId }: { periodId: string }) {
+function AgendaEditor({
+  periodId,
+  agenda,
+  onRegenerate,
+  generating,
+}: {
+  periodId: string;
+  agenda: { contentJson: AgendaModel; contentMd: string; status: string } | null;
+  onRegenerate: () => void;
+  generating: boolean;
+}) {
+  if (!agenda) {
+    return (
+      <div className="artefact-section">
+        <div className="artefact-section-header">
+          <div className="artefact-section-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+            Agenda Editor
+          </div>
+        </div>
+
+        <div className="empty-state">
+          <svg className="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="16" y1="13" x2="8" y2="13" />
+            <line x1="16" y1="17" x2="8" y2="17" />
+          </svg>
+          <h3>No agenda draft yet</h3>
+          <p>Upload your Management Report, Protime data, and Meeting Minutes, then click &quot;Generate Agenda&quot; to create an AI-powered draft.</p>
+          <button
+            className="btn btn-primary"
+            onClick={onRegenerate}
+            disabled={generating}
+            style={{ marginTop: 16 }}
+          >
+            {generating ? 'Generating...' : 'Generate Agenda'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="artefact-section">
       <div className="artefact-section-header">
@@ -441,19 +619,49 @@ function AgendaEditor({ periodId }: { periodId: string }) {
             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
           </svg>
           Agenda Editor
+          <span className={`badge ${agenda.status === 'final' ? 'badge-final' : 'badge-draft'}`} style={{ marginLeft: 12 }}>
+            {agenda.status}
+          </span>
         </div>
+        <button
+          className="btn btn-secondary"
+          onClick={onRegenerate}
+          disabled={generating}
+        >
+          {generating ? 'Regenerating...' : 'Regenerate'}
+        </button>
       </div>
 
-      <div className="empty-state">
-        <svg className="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <polyline points="14 2 14 8 20 8" />
-          <line x1="16" y1="13" x2="8" y2="13" />
-          <line x1="16" y1="17" x2="8" y2="17" />
-        </svg>
-        <h3>No agenda draft yet</h3>
-        <p>Upload documents and click &quot;Generate Agenda&quot; to create an AI-powered draft agenda.</p>
+      <div style={{ background: '#f9fafb', borderRadius: 8, padding: 20, marginTop: 16 }}>
+        {agenda.contentJson.sections.map((section, idx) => (
+          <div key={idx} style={{ marginBottom: 24 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12, color: '#1a1a1a' }}>
+              {section.title}
+            </h3>
+            <ul style={{ paddingLeft: 20, margin: 0 }}>
+              {section.bullets.map((bullet, bidx) => (
+                <li key={bidx} style={{ marginBottom: 8, lineHeight: 1.6 }}>
+                  {bullet.text}
+                  {bullet.evidence_refs && bullet.evidence_refs.length > 0 && (
+                    <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 8 }}>
+                      [{bullet.evidence_refs.length} source{bullet.evidence_refs.length > 1 ? 's' : ''}]
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
       </div>
+
+      <details style={{ marginTop: 16 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 14, color: '#6b7280' }}>
+          View Markdown Source
+        </summary>
+        <pre style={{ background: '#1a1a1a', color: '#e5e7eb', padding: 16, borderRadius: 8, overflow: 'auto', fontSize: 13, marginTop: 8 }}>
+          {agenda.contentMd}
+        </pre>
+      </details>
     </div>
   );
 }
@@ -534,9 +742,9 @@ function ActionsTab({
       </div>
 
       {showAddForm && (
-        <form onSubmit={handleCreateAction} style={{ marginBottom: '20px', padding: '16px', background: '#f9fafb', borderRadius: '8px' }}>
+        <form onSubmit={handleCreateAction} style={{ marginBottom: 20, padding: 16, background: '#f9fafb', borderRadius: 8 }}>
           <div className="form-row">
-            <div className="form-group" style={{ marginBottom: '12px' }}>
+            <div className="form-group" style={{ marginBottom: 12 }}>
               <label className="form-label">Title</label>
               <input
                 type="text"
@@ -547,7 +755,7 @@ function ActionsTab({
                 required
               />
             </div>
-            <div className="form-group" style={{ marginBottom: '12px' }}>
+            <div className="form-group" style={{ marginBottom: 12 }}>
               <label className="form-label">Owner</label>
               <input
                 type="text"
@@ -559,7 +767,7 @@ function ActionsTab({
               />
             </div>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: 8 }}>
             <button type="submit" className="btn btn-primary" disabled={creating}>
               {creating ? 'Creating...' : 'Create'}
             </button>
@@ -580,10 +788,10 @@ function ActionsTab({
           <p>Add action items to track tasks and follow-ups for this period.</p>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {carryOverActions.length > 0 && (
             <>
-              <div style={{ fontSize: '12px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', marginTop: '8px', marginBottom: '4px' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', marginTop: 8, marginBottom: 4 }}>
                 Carry-over from previous periods
               </div>
               {carryOverActions.map((action) => (
@@ -600,7 +808,7 @@ function ActionsTab({
 
           {actions.length > 0 && (
             <>
-              <div style={{ fontSize: '12px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', marginTop: '16px', marginBottom: '4px' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', marginTop: 16, marginBottom: 4 }}>
                 This period
               </div>
               {actions.map((action) => (
@@ -637,9 +845,9 @@ function ActionItemRow({
         onChange={(e) => onStatusChange(action.id, e.target.value as 'open' | 'in_progress' | 'done')}
         style={{
           padding: '6px 8px',
-          borderRadius: '6px',
+          borderRadius: 6,
           border: '1px solid #e5e7eb',
-          fontSize: '12px',
+          fontSize: 12,
           background: action.status === 'done' ? '#d1fae5' : action.status === 'in_progress' ? '#fef3c7' : '#fff',
         }}
       >
@@ -653,8 +861,8 @@ function ActionItemRow({
         </div>
         <div className="artefact-item-meta">
           {action.owner}
-          {isCarryOver && ` • From ${formatPeriodLabel(action.periodIdCreated)}`}
-          {action.dueDate && ` • Due ${new Date(action.dueDate).toLocaleDateString()}`}
+          {isCarryOver && ` · From ${formatPeriodLabel(action.periodIdCreated)}`}
+          {action.dueDate && ` · Due ${new Date(action.dueDate).toLocaleDateString()}`}
         </div>
       </div>
       <button className="btn btn-ghost" onClick={() => onDelete(action.id)}>

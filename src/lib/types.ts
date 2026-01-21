@@ -71,7 +71,7 @@ export interface Extraction {
 
 // Evidence reference for traceability
 export interface EvidenceRef {
-  artefactId: string;
+  artefact_id: string;
   page: number | null;
   quote: string | null;
 }
@@ -79,8 +79,8 @@ export interface EvidenceRef {
 // Agenda bullet point
 export interface AgendaBullet {
   text: string;
-  evidenceRefs: EvidenceRef[];
-  isKeyTopic?: boolean;
+  evidence_refs: EvidenceRef[];
+  is_key_topic?: boolean;
 }
 
 // Agenda section
@@ -90,11 +90,11 @@ export interface AgendaSection {
   bullets: AgendaBullet[];
 }
 
-// Agenda model (the structured JSON)
+// Agenda model (the structured JSON from AI)
 export interface AgendaModel {
   period: string; // YYYY-MM
   language: AgendaLanguage;
-  factsOnly: boolean;
+  facts_only: boolean;
   sections: AgendaSection[];
 }
 
