@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'owner';
+    }
+
+    function isReader() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'reader';
+    }
+
+    function isOwnerOrReader() {
+      return isOwner() || isReader();
+    }
+
+    // Profiles collection
+    // Users can read their own profile, only admins can write
+    match /profiles/{userId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if false; // Only admin SDK can write profiles
+    }
+
+    // Periods collection
+    // All authenticated users can read, only owners can write
+    match /periods/{periodId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isOwner();
+    }
+
+    // Artefacts collection
+    // Readers can only see non-restricted artefacts
+    // Owners can see and modify all artefacts
+    match /artefacts/{artefactId} {
+      allow read: if isAuthenticated() &&
+        (isOwner() || resource.data.visibility == 'normal');
+      allow create, update, delete: if isOwner();
+    }
+
+    // Extractions collection
+    // All authenticated users can read, only owners can write
+    match /extractions/{extractionId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isOwner();
+    }
+
+    // Agendas collection
+    // All authenticated users can read, only owners can write
+    match /agendas/{agendaId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isOwner();
+    }
+
+    // Action items collection
+    // All authenticated users can read, only owners can write
+    match /action_items/{actionId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isOwner();
+    }
+  }
+}

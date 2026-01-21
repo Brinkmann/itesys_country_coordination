@@ -1,0 +1,87 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "artefacts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "periodId", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "artefacts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "periodId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "artefacts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "periodId", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "agendas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "periodId", "order": "ASCENDING" },
+        { "fieldPath": "versionInt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "action_items",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "dueDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "action_items",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "periodIdCreated", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "action_items",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "periodIdCreated", "order": "DESCENDING" },
+        { "fieldPath": "dueDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "extractions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "artefactId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "extractions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "periodId", "order": "ASCENDING" },
+        { "fieldPath": "kind", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "periods",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isHistorical", "order": "ASCENDING" },
+        { "fieldPath": "id", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
