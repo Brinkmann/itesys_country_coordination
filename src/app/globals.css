@@ -299,6 +299,21 @@ button.ghost {
   font-weight: 600;
 }
 
+.period-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  background: #f8fafc;
+  font-weight: 600;
+}
+
+.period-id {
+  font-variant-numeric: tabular-nums;
+}
+
 .period-actions {
   display: flex;
   flex-direction: column;

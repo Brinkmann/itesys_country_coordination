@@ -18,6 +18,7 @@ import { useRouter } from "next/navigation";
 import { auth, db, firebaseReady } from "@/lib/firebase/client";
 
 type PeriodStatus = "current" | "historical";
+type NavSection = "periods" | "historical" | "settings";
 
 type PeriodRecord = {
   id: string;
@@ -48,6 +49,7 @@ export default function WorkspacePage() {
   const [showCreate, setShowCreate] = useState(false);
   const [periodId, setPeriodId] = useState(getCurrentPeriod());
   const [periodLabel, setPeriodLabel] = useState(toMonthLabel(getCurrentPeriod()));
+  const [activeSection, setActiveSection] = useState<NavSection>("periods");
 
   useEffect(() => {
     if (!auth) {
@@ -130,7 +132,7 @@ export default function WorkspacePage() {
       return;
     }
     if (!periodId.trim()) {
-      setError("Enter a period ID (YYYY-MM).\n");
+      setError("Enter a period ID (YYYY-MM).");
       return;
     }
 
@@ -173,21 +175,33 @@ export default function WorkspacePage() {
     <div className="workspace-shell">
       <aside className="workspace-sidebar">
         <div className="brand">
-          <span className="brand-mark">G</span>
+          <span className="brand-mark">I</span>
           <div>
-            <p className="brand-title">GovernanceOS</p>
+            <p className="brand-title">Itesys</p>
             <p className="brand-subtitle">Country coordination</p>
           </div>
         </div>
 
         <nav className="nav-list">
-          <button className="nav-item active" type="button">
+          <button
+            className={activeSection === "periods" ? "nav-item active" : "nav-item"}
+            type="button"
+            onClick={() => setActiveSection("periods")}
+          >
             Periods
           </button>
-          <button className="nav-item" type="button">
+          <button
+            className={activeSection === "historical" ? "nav-item active" : "nav-item"}
+            type="button"
+            onClick={() => setActiveSection("historical")}
+          >
             Historical Data
           </button>
-          <button className="nav-item" type="button">
+          <button
+            className={activeSection === "settings" ? "nav-item active" : "nav-item"}
+            type="button"
+            onClick={() => setActiveSection("settings")}
+          >
             Settings
           </button>
         </nav>
@@ -214,99 +228,88 @@ export default function WorkspacePage() {
       <main className="workspace-main">
         <header className="workspace-topbar">
           <div>
-            <p className="helper">Periods</p>
-            <h1>Periods</h1>
             <p className="helper">
-              Manage board cycles and governance artefacts for the current
-              financial year.
+              {activeSection === "historical" ? "Historical data" : "Periods"}
+            </p>
+            <h1>{activeSection === "historical" ? "Historical periods" : "Periods"}</h1>
+            <p className="helper">
+              {activeSection === "historical"
+                ? "Past cycles kept for reference and trend analysis."
+                : "Manage board cycles and governance artefacts for the current financial year."}
             </p>
           </div>
-          <button className="primary" type="button" onClick={() => setShowCreate(true)}>
-            + Start New Period
-          </button>
+          {activeSection !== "settings" ? (
+            <button className="primary" type="button" onClick={() => setShowCreate(true)}>
+              + Start New Period
+            </button>
+          ) : null}
         </header>
 
-        <section className="panel">
-          <div className="panel-header">
-            <div>
-              <h2>Current periods</h2>
-              <p className="helper">
-                Active months that feed into the current governance cycle.
-              </p>
+        {activeSection === "settings" ? (
+          <section className="panel">
+            <p className="helper">Settings will be configured in a later slice.</p>
+          </section>
+        ) : (
+          <section className="panel">
+            <div className="panel-header">
+              <div>
+                <h2>
+                  {activeSection === "historical" ? "Historical periods" : "Current periods"}
+                </h2>
+                <p className="helper">
+                  {activeSection === "historical"
+                    ? "Past cycles kept for reference and trend analysis."
+                    : "Active months that feed into the current governance cycle."}
+                </p>
+              </div>
             </div>
-          </div>
 
-          <div className="period-grid">
-            {currentPeriods.length === 0 ? (
-              <p className="helper">No current periods yet.</p>
-            ) : (
-              currentPeriods.map((period) => (
-                <div className="period-card" key={period.id}>
-                  <div className="period-card-header">
-                    <div>
-                      <p className="period-title">{period.label}</p>
-                      <p className="helper">{period.id}</p>
+            <div className="period-grid">
+              {(activeSection === "historical" ? historicalPeriods : currentPeriods).length ===
+              0 ? (
+                <p className="helper">
+                  {activeSection === "historical"
+                    ? "No historical periods yet."
+                    : "No current periods yet."}
+                </p>
+              ) : (
+                (activeSection === "historical" ? historicalPeriods : currentPeriods).map(
+                  (period) => (
+                    <div className="period-card" key={period.id}>
+                      <div className="period-card-header">
+                        <div>
+                          <p className="period-title">{period.label}</p>
+                          <p className="helper">{period.label}</p>
+                        </div>
+                      </div>
+                      <div className="period-meta">
+                        <span className="helper">Period</span>
+                        <span className="period-id">{period.id}</span>
+                      </div>
+                      <div className="period-actions">
+                        <button
+                          className="ghost"
+                          type="button"
+                          onClick={() => handleToggleStatus(period)}
+                        >
+                          {period.status === "current"
+                            ? "Move to historical"
+                            : "Move to current"}
+                        </button>
+                        <Link
+                          className="ghost-link"
+                          href={`/workspace/periods/${period.id}`}
+                        >
+                          Open workspace →
+                        </Link>
+                      </div>
                     </div>
-                    <span className="badge">Current</span>
-                  </div>
-                  <div className="period-actions">
-                    <button
-                      className="ghost"
-                      type="button"
-                      onClick={() => handleToggleStatus(period)}
-                    >
-                      Move to historical
-                    </button>
-                    <Link className="ghost-link" href={`/workspace/periods/${period.id}`}>
-                      Open workspace →
-                    </Link>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-header">
-            <div>
-              <h2>Historical periods</h2>
-              <p className="helper">
-                Past cycles kept for reference and trend analysis.
-              </p>
+                  ),
+                )
+              )}
             </div>
-          </div>
-
-          <div className="period-grid">
-            {historicalPeriods.length === 0 ? (
-              <p className="helper">No historical periods yet.</p>
-            ) : (
-              historicalPeriods.map((period) => (
-                <div className="period-card" key={period.id}>
-                  <div className="period-card-header">
-                    <div>
-                      <p className="period-title">{period.label}</p>
-                      <p className="helper">{period.id}</p>
-                    </div>
-                    <span className="badge">Historical</span>
-                  </div>
-                  <div className="period-actions">
-                    <button
-                      className="ghost"
-                      type="button"
-                      onClick={() => handleToggleStatus(period)}
-                    >
-                      Move to current
-                    </button>
-                    <Link className="ghost-link" href={`/workspace/periods/${period.id}`}>
-                      Open workspace →
-                    </Link>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
+          </section>
+        )}
 
         {error ? <p className="helper">{error}</p> : null}
       </main>

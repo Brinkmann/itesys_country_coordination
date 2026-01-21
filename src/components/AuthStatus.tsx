@@ -119,7 +119,7 @@ export default function AuthStatus() {
   return (
     <div className="card">
       <header className="header">
-        <p className="helper">GovernanceOS baseline setup</p>
+        <p className="helper">Itesys baseline setup</p>
         <h1>Country Coordination Workspace</h1>
         <p className="helper">
           Firebase Auth, Firestore, and Storage are ready. Use email/password to
