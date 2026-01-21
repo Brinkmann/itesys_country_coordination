@@ -205,29 +205,35 @@ export async function createPeriod(
   input: CreatePeriodInput,
   userId: string
 ): Promise<{ success: boolean; error?: string }> {
-  const db = getAdminFirestore();
+  try {
+    // Validate period ID format (YYYY-MM)
+    const periodRegex = /^\d{4}-(0[1-9]|1[0-2])$/;
+    if (!periodRegex.test(input.id)) {
+      return { success: false, error: 'Invalid period format. Use YYYY-MM (e.g., 2026-01)' };
+    }
 
-  // Check if period already exists
-  const existing = await db.collection(COLLECTIONS.PERIODS).doc(input.id).get();
+    const db = getAdminFirestore();
 
-  if (existing.exists) {
-    return { success: false, error: 'Period already exists' };
+    // Check if period already exists
+    const existing = await db.collection(COLLECTIONS.PERIODS).doc(input.id).get();
+
+    if (existing.exists) {
+      return { success: false, error: 'Period already exists' };
+    }
+
+    await db.collection(COLLECTIONS.PERIODS).doc(input.id).set({
+      label: input.label,
+      isHistorical: input.isHistorical ?? false,
+      createdAt: Timestamp.now(),
+      createdBy: userId,
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error creating period:', error);
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return { success: false, error: `Failed to create period: ${message}` };
   }
-
-  // Validate period ID format (YYYY-MM)
-  const periodRegex = /^\d{4}-(0[1-9]|1[0-2])$/;
-  if (!periodRegex.test(input.id)) {
-    return { success: false, error: 'Invalid period format. Use YYYY-MM (e.g., 2026-01)' };
-  }
-
-  await db.collection(COLLECTIONS.PERIODS).doc(input.id).set({
-    label: input.label,
-    isHistorical: input.isHistorical,
-    createdAt: Timestamp.now(),
-    createdBy: userId,
-  });
-
-  return { success: true };
 }
 
 export async function deletePeriod(

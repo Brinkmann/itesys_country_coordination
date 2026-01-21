@@ -25,8 +25,13 @@ function getAdminApp(): App {
   const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
   if (!projectId || !clientEmail || !privateKey) {
+    console.error('Firebase Admin SDK credential check:', {
+      hasProjectId: !!projectId,
+      hasClientEmail: !!clientEmail,
+      hasPrivateKey: !!privateKey,
+    });
     throw new Error(
-      'Missing Firebase Admin SDK credentials. Ensure FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY are set.'
+      'Missing Firebase Admin SDK credentials. Ensure FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY are set in .env.local. Restart the dev server after adding environment variables.'
     );
   }
 
