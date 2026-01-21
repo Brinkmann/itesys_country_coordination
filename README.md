@@ -24,7 +24,10 @@ GovernanceOS baseline app for monthly agendas and document coordination.
 
 ## Firebase setup checklist
 - Create a Firebase project and a Web App.
-- Enable **Email/Password** sign-in in Firebase Auth.
+- Enable **Email/Password** sign-in in Firebase Auth:
+  - Firebase Console → Authentication → Sign-in method → Email/Password → Enable → Save.
+- Create a Firestore database:
+  - Firebase Console → Firestore Database → Create database → choose **Production** or **Test** mode → select a location.
 - Create a single Storage bucket (default) and use folders:
   - `artefacts/`
   - `agenda-exports/`

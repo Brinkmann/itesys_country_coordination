@@ -1,8 +1,48 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut,
+  type User,
+} from "firebase/auth";
 import { auth, firebaseReady } from "@/lib/firebase/client";
+
+const formatAuthError = (err: unknown) => {
+  if (
+    err &&
+    typeof err === "object" &&
+    "code" in err &&
+    typeof err.code === "string"
+  ) {
+    switch (err.code) {
+      case "auth/configuration-not-found":
+        return [
+          "Email/password auth is not enabled for this Firebase project.",
+          "Enable it in Firebase Console → Authentication → Sign-in method → Email/Password.",
+        ].join(" ");
+      case "auth/user-not-found":
+        return "No user found for that email. Use Sign up to create one.";
+      case "auth/wrong-password":
+        return "Incorrect password. Try again or sign up.";
+      case "auth/invalid-email":
+        return "Invalid email address. Check the address and try again.";
+      case "auth/email-already-in-use":
+        return "An account already exists for that email. Use Sign in instead.";
+      case "auth/weak-password":
+        return "Password is too weak. Use at least 6 characters.";
+      default:
+        return `Firebase error: ${err.code}`;
+    }
+  }
+
+  if (err instanceof Error) {
+    return err.message;
+  }
+
+  return "Unable to authenticate.";
+};
 
 export default function AuthStatus() {
   const [user, setUser] = useState<User | null>(null);
@@ -32,11 +72,22 @@ export default function AuthStatus() {
       }
       await signInWithEmailAndPassword(auth, email, password);
     } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError("Unable to sign in.");
+      setError(formatAuthError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSignUp = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      if (!auth) {
+        throw new Error("Firebase is not configured for the browser.");
       }
+      await createUserWithEmailAndPassword(auth, email, password);
+    } catch (err) {
+      setError(formatAuthError(err));
     } finally {
       setLoading(false);
     }
@@ -51,11 +102,7 @@ export default function AuthStatus() {
       }
       await signOut(auth);
     } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError("Unable to sign out.");
-      }
+      setError(formatAuthError(err));
     } finally {
       setLoading(false);
     }
@@ -116,6 +163,14 @@ export default function AuthStatus() {
           disabled={loading || !firebaseReady}
         >
           {loading ? "Signing in..." : "Sign in"}
+        </button>
+        <button
+          className="secondary"
+          type="button"
+          onClick={handleSignUp}
+          disabled={loading || !firebaseReady}
+        >
+          Sign up
         </button>
         <button
           className="secondary"
