@@ -2,7 +2,7 @@ import "./globals.css";
 import type { ReactNode } from "react";
 
 export const metadata = {
-  title: "Itesys",
+  title: "Itesys - Country Coordination",
   description: "Monthly agenda workspace for country coordination."
 };
 

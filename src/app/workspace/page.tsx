@@ -177,7 +177,7 @@ export default function WorkspacePage() {
         <div className="brand">
           <span className="brand-mark">I</span>
           <div>
-            <p className="brand-title">Itesys</p>
+            <p className="brand-title">Itesys - Country Coordination</p>
             <p className="brand-subtitle">Country coordination</p>
           </div>
         </div>
