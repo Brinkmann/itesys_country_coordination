@@ -1,6 +1,6 @@
 # itesys_country_coordination
 
-GovernanceOS baseline app for monthly agendas and document coordination.
+Country Coordination baseline app for monthly agendas and document coordination.
 
 ## Stack
 - Next.js (App Router, TypeScript)
