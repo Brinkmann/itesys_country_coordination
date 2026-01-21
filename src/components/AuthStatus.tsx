@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -45,6 +46,7 @@ const formatAuthError = (err: unknown) => {
 };
 
 export default function AuthStatus() {
+  const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -62,6 +64,12 @@ export default function AuthStatus() {
 
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (user) {
+      router.push("/workspace");
+    }
+  }, [router, user]);
 
   const handleSignIn = async () => {
     setLoading(true);
