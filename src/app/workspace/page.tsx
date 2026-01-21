@@ -1,18 +1,67 @@
 "use client";
 
 import { signOut } from "firebase/auth";
-import { useEffect, useMemo, useState } from "react";
+import {
+  addDoc,
+  collection,
+  doc,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  where,
+  type Timestamp,
+} from "firebase/firestore";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { auth, firebaseReady } from "@/lib/firebase/client";
+import { auth, db, firebaseReady, storage } from "@/lib/firebase/client";
+
+type ArtefactType = "finance" | "productivity" | "minutes";
+
+type ArtefactRecord = {
+  id: string;
+  filename: string;
+  storagePath: string;
+  downloadUrl?: string;
+  periodId: string;
+  type: ArtefactType;
+  uploadedBy?: string;
+  size?: number;
+  contentType?: string;
+  tags?: string[];
+  createdAt?: Timestamp | null;
+};
+
+const formatFileSize = (size?: number) => {
+  if (!size) return "–";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const getCurrentPeriod = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+};
 
 export default function WorkspacePage() {
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [activeTab, setActiveTab] = useState<
     "finance" | "productivity" | "minutes" | "agenda" | "actions"
   >("finance");
   const [showCreatePeriod, setShowCreatePeriod] = useState(false);
+  const [periodId, setPeriodId] = useState(getCurrentPeriod());
+  const [periodLabel, setPeriodLabel] = useState("January 2026");
+  const [tagsInput, setTagsInput] = useState("");
+  const [uploads, setUploads] = useState<ArtefactRecord[]>([]);
 
   useEffect(() => {
     if (!auth) {
@@ -27,6 +76,50 @@ export default function WorkspacePage() {
 
     return () => unsubscribe();
   }, [router]);
+
+  useEffect(() => {
+    if (!db || !firebaseReady) {
+      return;
+    }
+
+    if (activeTab === "agenda" || activeTab === "actions") {
+      setUploads([]);
+      return;
+    }
+
+    const artefactQuery = query(
+      collection(db, "artefacts"),
+      where("periodId", "==", periodId),
+      where("type", "==", activeTab),
+      orderBy("createdAt", "desc"),
+    );
+
+    const unsubscribe = onSnapshot(
+      artefactQuery,
+      async (snapshot) => {
+        const items = await Promise.all(
+          snapshot.docs.map(async (doc) => {
+            const data = doc.data() as Omit<ArtefactRecord, "id">;
+            let downloadUrl: string | undefined;
+            if (storage && data.storagePath) {
+              try {
+                downloadUrl = await getDownloadURL(ref(storage, data.storagePath));
+              } catch {
+                downloadUrl = undefined;
+              }
+            }
+            return { id: doc.id, ...data, downloadUrl };
+          }),
+        );
+        setUploads(items);
+      },
+      (err) => {
+        setError(err.message);
+      },
+    );
+
+    return () => unsubscribe();
+  }, [activeTab, db, firebaseReady, periodId]);
 
   const periodCards = useMemo(
     () => [
@@ -83,6 +176,89 @@ export default function WorkspacePage() {
     }
   };
 
+  const handleUpload = async (type: ArtefactType) => {
+    setError(null);
+    if (!auth || !storage || !db) {
+      setError("Firebase is not configured for uploads.");
+      return;
+    }
+
+    const file = fileInputRef.current?.files?.[0];
+    if (!file) {
+      setError("Choose a file to upload.");
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const artefactId = crypto.randomUUID();
+      const path = `artefacts/${periodId}/${type}/${artefactId}/${file.name}`;
+      const storageRef = ref(storage, path);
+      await uploadBytes(storageRef, file);
+
+      const tags = tagsInput
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+
+      await addDoc(collection(db, "artefacts"), {
+        periodId,
+        type,
+        filename: file.name,
+        storagePath: path,
+        uploadedBy: auth.currentUser?.uid ?? null,
+        createdAt: serverTimestamp(),
+        size: file.size,
+        contentType: file.type,
+        tags,
+      });
+
+      setTagsInput("");
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    } catch (err) {
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError("Upload failed. Try again.");
+      }
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleCreatePeriod = async () => {
+    setError(null);
+    if (!db) {
+      setError("Firestore is not configured.");
+      return;
+    }
+    if (!periodId.trim()) {
+      setError("Enter a period ID (YYYY-MM).");
+      return;
+    }
+
+    try {
+      await setDoc(doc(db, "periods", periodId.trim()), {
+        label: periodLabel.trim() || periodId.trim(),
+        createdAt: serverTimestamp(),
+      });
+      setShowCreatePeriod(false);
+    } catch (err) {
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError("Unable to create period.");
+      }
+    }
+  };
+
+  const activeUploadType: ArtefactType | null =
+    activeTab === "finance" || activeTab === "productivity" || activeTab === "minutes"
+      ? activeTab
+      : null;
+
   return (
     <div className="workspace-shell">
       <aside className="workspace-sidebar">
@@ -128,8 +304,8 @@ export default function WorkspacePage() {
       <main className="workspace-main">
         <header className="workspace-topbar">
           <div>
-            <p className="helper">Periods / January 2026</p>
-            <h1>January 2026 Workspace</h1>
+            <p className="helper">Periods / {periodLabel}</p>
+            <h1>{periodLabel} Workspace</h1>
           </div>
           <div className="top-actions">
             <button className="ghost" type="button">
@@ -230,95 +406,90 @@ export default function WorkspacePage() {
             </div>
 
             <div className="panel-body">
-              {activeTab === "finance" && (
+              {activeUploadType && (
                 <div className="content-grid">
                   <div className="upload-card">
-                    <h3>Financial Artefacts</h3>
+                    <h3>
+                      {activeUploadType === "finance"
+                        ? "Financial Artefacts"
+                        : activeUploadType === "productivity"
+                          ? "Productivity Reports"
+                          : "Meeting Minutes"}
+                    </h3>
                     <p className="helper">
-                      Drag & drop PDF or DOCX files here. We will extract key
-                      metrics automatically.
+                      {activeUploadType === "minutes"
+                        ? "Upload minutes or transcripts to populate decisions and action items."
+                        : "Upload PDF, DOCX, DOC, or TXT files. We will extract key metrics automatically."}
                     </p>
-                    <div className="upload-zone">Upload Financial Documents</div>
-                    <div className="inline-actions">
-                      <button className="ghost" type="button">
-                        Search files
-                      </button>
-                      <button className="primary" type="button">
-                        Upload
-                      </button>
-                    </div>
-                  </div>
-                  <div className="insight-card">
-                    <p className="helper">AI extraction preview</p>
-                    <ul>
-                      <li>
-                        Revenue increased by <strong>15% YoY</strong> driven by
-                        enterprise expansion.
-                      </li>
-                      <li>
-                        Operating expenses remained flat despite headcount
-                        growth.
-                      </li>
-                    </ul>
-                    <div className="alert">
-                      Missing Q4 cash-flow statement for final review.
-                    </div>
-                  </div>
-                </div>
-              )}
 
-              {activeTab === "productivity" && (
-                <div className="content-grid">
-                  <div className="upload-card">
-                    <h3>Productivity Reports</h3>
-                    <p className="helper">
-                      Upload delivery metrics, sprint summaries, and pipeline
-                      status notes.
-                    </p>
-                    <div className="upload-zone">Upload Productivity Reports</div>
-                    <div className="inline-actions">
-                      <button className="ghost" type="button">
-                        Browse artefacts
-                      </button>
-                      <button className="primary" type="button">
-                        Upload
-                      </button>
+                    <div className="upload-zone">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".pdf,.doc,.docx,.txt"
+                      />
+                      <span>Choose a file to upload</span>
                     </div>
-                  </div>
-                  <div className="insight-card">
-                    <p className="helper">Signals to watch</p>
-                    <ul>
-                      <li>Cycle time improved 8% month-over-month.</li>
-                      <li>Top blocker: procurement approvals.</li>
-                    </ul>
-                  </div>
-                </div>
-              )}
 
-              {activeTab === "minutes" && (
-                <div className="content-grid">
-                  <div className="upload-card">
-                    <h3>Meeting Minutes</h3>
-                    <p className="helper">
-                      Upload minutes or transcripts to populate decisions and
-                      action items.
-                    </p>
-                    <div className="upload-zone">Upload Meeting Minutes</div>
+                    <label className="field">
+                      Tags (comma-separated)
+                      <input
+                        type="text"
+                        placeholder="e.g. revenue, staffing"
+                        value={tagsInput}
+                        onChange={(event) => setTagsInput(event.target.value)}
+                      />
+                    </label>
+
                     <div className="inline-actions">
-                      <button className="ghost" type="button">
-                        Paste notes
-                      </button>
-                      <button className="primary" type="button">
-                        Upload
+                      <button
+                        className="primary"
+                        type="button"
+                        onClick={() => handleUpload(activeUploadType)}
+                        disabled={uploading || !firebaseReady}
+                      >
+                        {uploading ? "Uploading..." : "Upload"}
                       </button>
                     </div>
                   </div>
+
                   <div className="insight-card">
-                    <p className="helper">Decision highlights</p>
-                    <ul>
-                      <li>Approve the 2026 hiring plan draft.</li>
-                      <li>Confirm market entry timeline for Q2.</li>
-                    </ul>
+                    <p className="helper">Recent uploads ({periodId})</p>
+                    {uploads.length === 0 ? (
+                      <p className="helper">No files uploaded yet.</p>
+                    ) : (
+                      <ul className="upload-list">
+                        {uploads.map((upload) => (
+                          <li key={upload.id}>
+                            <div>
+                              <p className="upload-name">{upload.filename}</p>
+                              <p className="helper">
+                                {formatFileSize(upload.size)} ·{" "}
+                                {upload.createdAt?.toDate
+                                  ? upload.createdAt.toDate().toLocaleString()
+                                  : "Just now"}
+                              </p>
+                              {upload.tags && upload.tags.length > 0 ? (
+                                <div className="tag-row">
+                                  {upload.tags.map((tag) => (
+                                    <span className="tag" key={`${upload.id}-${tag}`}>
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                            {upload.downloadUrl ? (
+                              <a className="ghost-link" href={upload.downloadUrl}>
+                                View
+                              </a>
+                            ) : (
+                              <span className="helper">Processing</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 </div>
               )}
@@ -422,26 +593,42 @@ export default function WorkspacePage() {
             </p>
             <div className="quick-select">
               {[
-                "December 2025",
-                "June 2025",
-                "May 2025",
-                "April 2025",
-                "March 2025",
-                "February 2025",
-              ].map((label) => (
-                <button className="ghost" type="button" key={label}>
-                  {label}
+                { label: "December 2025", id: "2025-12" },
+                { label: "June 2025", id: "2025-06" },
+                { label: "May 2025", id: "2025-05" },
+                { label: "April 2025", id: "2025-04" },
+                { label: "March 2025", id: "2025-03" },
+                { label: "February 2025", id: "2025-02" },
+              ].map((item) => (
+                <button
+                  className="ghost"
+                  type="button"
+                  key={item.id}
+                  onClick={() => {
+                    setPeriodId(item.id);
+                    setPeriodLabel(item.label);
+                  }}
+                >
+                  {item.label}
                 </button>
               ))}
             </div>
             <div className="form-grid">
               <label>
                 Period ID (YYYY-MM)
-                <input type="text" defaultValue="2024-06" />
+                <input
+                  type="text"
+                  value={periodId}
+                  onChange={(event) => setPeriodId(event.target.value)}
+                />
               </label>
               <label>
                 Label
-                <input type="text" defaultValue="June 2024" />
+                <input
+                  type="text"
+                  value={periodLabel}
+                  onChange={(event) => setPeriodLabel(event.target.value)}
+                />
               </label>
             </div>
             <div className="actions">
@@ -452,7 +639,7 @@ export default function WorkspacePage() {
               >
                 Cancel
               </button>
-              <button className="primary" type="button">
+              <button className="primary" type="button" onClick={handleCreatePeriod}>
                 Create Period
               </button>
             </div>

@@ -111,6 +111,19 @@ button.ghost {
   border: 1px solid #e2e8f0;
 }
 
+.ghost-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #0f172a;
+  font-weight: 600;
+  font-size: 14px;
+}
+
 .helper {
   font-size: 14px;
   color: #64748b;
@@ -380,12 +393,53 @@ button.ghost {
   font-weight: 600;
   color: #4b5563;
   background: #ffffff;
+  display: grid;
+  gap: 12px;
 }
 
 .inline-actions {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+  font-size: 14px;
+  color: #475569;
+}
+
+.field input {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 15px;
+}
+
+.upload-zone input[type="file"] {
+  width: 100%;
+}
+
+.upload-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 16px;
+}
+
+.upload-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.upload-name {
+  margin: 0;
+  font-weight: 600;
 }
 
 .alert {
