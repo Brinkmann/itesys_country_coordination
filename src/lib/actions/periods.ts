@@ -7,17 +7,17 @@ import { Timestamp } from 'firebase-admin/firestore';
 export async function getPeriods(includeHistorical = true): Promise<PeriodWithStats[]> {
   const db = getAdminFirestore();
 
-  let query = db.collection(COLLECTIONS.PERIODS).orderBy('id', 'desc');
-
-  if (!includeHistorical) {
-    query = query.where('isHistorical', '==', false);
-  }
-
-  const snapshot = await query.get();
+  // Fetch all periods
+  const snapshot = await db.collection(COLLECTIONS.PERIODS).get();
 
   const periods: PeriodWithStats[] = [];
 
-  for (const doc of snapshot.docs) {
+  // Filter docs based on includeHistorical flag
+  const filteredDocs = includeHistorical
+    ? snapshot.docs
+    : snapshot.docs.filter((doc) => doc.data().isHistorical !== true);
+
+  for (const doc of filteredDocs) {
     const data = doc.data();
 
     // Get artefact counts for this period
@@ -68,21 +68,29 @@ export async function getPeriods(includeHistorical = true): Promise<PeriodWithSt
     });
   }
 
+  // Sort by id descending
+  periods.sort((a, b) => b.id.localeCompare(a.id));
+
   return periods;
 }
 
 export async function getHistoricalPeriods(): Promise<PeriodWithStats[]> {
   const db = getAdminFirestore();
 
+  // Fetch all periods and filter in code
   const snapshot = await db
     .collection(COLLECTIONS.PERIODS)
-    .where('isHistorical', '==', true)
-    .orderBy('id', 'desc')
     .get();
 
   const periods: PeriodWithStats[] = [];
 
-  for (const doc of snapshot.docs) {
+  // Filter for historical periods only
+  const historicalDocs = snapshot.docs.filter((doc) => {
+    const data = doc.data();
+    return data.isHistorical === true;
+  });
+
+  for (const doc of historicalDocs) {
     const data = doc.data();
 
     const artefactsSnapshot = await db
@@ -120,21 +128,29 @@ export async function getHistoricalPeriods(): Promise<PeriodWithStats[]> {
     });
   }
 
+  // Sort by id descending
+  periods.sort((a, b) => b.id.localeCompare(a.id));
+
   return periods;
 }
 
 export async function getCurrentPeriods(): Promise<PeriodWithStats[]> {
   const db = getAdminFirestore();
 
+  // Fetch all periods and filter in code to avoid index issues
   const snapshot = await db
     .collection(COLLECTIONS.PERIODS)
-    .where('isHistorical', '==', false)
-    .orderBy('id', 'desc')
     .get();
 
   const periods: PeriodWithStats[] = [];
 
-  for (const doc of snapshot.docs) {
+  // Filter for non-historical periods
+  const nonHistoricalDocs = snapshot.docs.filter((doc) => {
+    const data = doc.data();
+    return data.isHistorical !== true;
+  });
+
+  for (const doc of nonHistoricalDocs) {
     const data = doc.data();
 
     const artefactsSnapshot = await db
@@ -177,6 +193,9 @@ export async function getCurrentPeriods(): Promise<PeriodWithStats[]> {
       hasFinalAgenda: agendasSnapshot.docs.some((d) => d.data().status === 'final'),
     });
   }
+
+  // Sort by id descending (YYYY-MM format sorts correctly as strings)
+  periods.sort((a, b) => b.id.localeCompare(a.id));
 
   return periods;
 }
@@ -222,6 +241,7 @@ export async function createPeriod(
     }
 
     await db.collection(COLLECTIONS.PERIODS).doc(input.id).set({
+      id: input.id,
       label: input.label,
       isHistorical: input.isHistorical ?? false,
       createdAt: Timestamp.now(),
