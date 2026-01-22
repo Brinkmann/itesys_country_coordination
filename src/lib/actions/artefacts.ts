@@ -167,6 +167,54 @@ export async function createArtefact(
   }
 }
 
+/**
+ * Create an artefact record for a file that was uploaded directly to storage
+ * (Used with client-side direct uploads to bypass serverless size limits)
+ */
+export async function createArtefactRecord(
+  periodId: string,
+  type: ArtefactType,
+  filename: string,
+  storagePath: string,
+  mimeType: string,
+  fileSize: number,
+  userId: string,
+  tags: string[] = [],
+  visibility: ArtefactVisibility = 'normal'
+): Promise<{ success: boolean; artefactId?: string; error?: string }> {
+  const db = getAdminFirestore();
+
+  try {
+    const artefactId = storagePath.split('/')[3]; // Extract artefactId from path: artefacts/{periodId}/{type}/{artefactId}/{filename}
+
+    // Create artefact document
+    await db.collection(COLLECTIONS.ARTEFACTS).doc(artefactId).set({
+      periodId,
+      type,
+      filename,
+      storagePath,
+      uploadedBy: userId,
+      createdAt: Timestamp.now(),
+      versionInt: 1,
+      tags,
+      parsedText: null,
+      parsedPages: null,
+      visibility,
+      parseError: null,
+      fileSize,
+      mimeType,
+    });
+
+    return { success: true, artefactId };
+  } catch (error) {
+    console.error('Error creating artefact record:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to create artefact record',
+    };
+  }
+}
+
 export async function createNoteArtefact(
   periodId: string,
   content: string,

@@ -6,11 +6,13 @@ import Link from 'next/link';
 import { auth } from '@/lib/firebase/client';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { getPeriod } from '@/lib/actions/periods';
-import { getArtefactsByPeriod, createArtefact, deleteArtefact } from '@/lib/actions/artefacts';
+import { getArtefactsByPeriod, createArtefactRecord, deleteArtefact } from '@/lib/actions/artefacts';
 import { getActionsByPeriod, getCarryOverActions, createAction, updateAction, deleteAction } from '@/lib/actions/actions';
 import { extractTextFromArtefact } from '@/lib/services/textExtraction';
 import { generateAgenda, getLatestAgenda } from '@/lib/services/agendaGeneration';
+import { uploadFileToStorage, getArtefactStoragePath } from '@/lib/services/storageUpload';
 import { Period, Artefact, ActionItem, ArtefactType, AgendaModel, formatPeriodLabel } from '@/lib/types';
+import { v4 as uuidv4 } from 'uuid';
 
 type ArtefactTabKey = 'finance' | 'productivity' | 'minutes' | 'other';
 type TabKey = ArtefactTabKey | 'agenda' | 'actions';
@@ -111,45 +113,51 @@ export default function PeriodWorkspacePage() {
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
-        // Read file as base64
-        const base64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const result = reader.result as string;
-            resolve(result.split(',')[1]);
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
+        // Generate a unique ID for the artefact
+        const artefactId = uuidv4();
+        const storagePath = getArtefactStoragePath(periodId, type, artefactId, file.name);
+
+        // Upload directly to Firebase Storage (bypasses serverless size limits)
+        console.log(`[Upload] Starting direct upload for ${file.name} (${Math.round(file.size / 1024)} KB)`);
+        const uploadResult = await uploadFileToStorage(file, storagePath, (progress) => {
+          console.log(`[Upload] Progress: ${Math.round(progress.progress)}%`);
         });
 
-        // Upload artefact
-        const result = await createArtefact(
-          periodId,
-          type,
-          file.name,
-          base64,
-          file.type,
-          user.uid
-        );
-
-        if (!result.success) {
-          alert(result.error || 'Failed to upload file');
+        if (!uploadResult.success) {
+          alert(uploadResult.error || 'Failed to upload file');
           continue;
         }
 
+        // Create artefact record in Firestore
+        const recordResult = await createArtefactRecord(
+          periodId,
+          type,
+          file.name,
+          storagePath,
+          file.type,
+          file.size,
+          user.uid
+        );
+
+        if (!recordResult.success) {
+          alert(recordResult.error || 'Failed to create artefact record');
+          continue;
+        }
+
+        console.log(`[Upload] File uploaded successfully, starting text extraction`);
+
         // Extract text from the uploaded file (don't fail if extraction fails)
-        if (result.artefactId) {
-          try {
-            const storagePath = `artefacts/${periodId}/${type}/${result.artefactId}/${file.name}`;
-            const extractResult = await extractTextFromArtefact(result.artefactId, storagePath, file.type);
-            if (!extractResult.success) {
-              console.error('Text extraction failed:', extractResult.error);
-              // Don't alert - the file is uploaded, extraction error is shown on the document
-            }
-          } catch (extractError) {
-            console.error('Text extraction error:', extractError);
-            // Don't fail the whole upload if extraction fails
+        try {
+          const extractResult = await extractTextFromArtefact(artefactId, storagePath, file.type);
+          if (!extractResult.success) {
+            console.error('Text extraction failed:', extractResult.error);
+            // Don't alert - the file is uploaded, extraction error is shown on the document
+          } else {
+            console.log(`[Upload] Text extraction completed successfully`);
           }
+        } catch (extractError) {
+          console.error('Text extraction error:', extractError);
+          // Don't fail the whole upload if extraction fails
         }
       }
 
