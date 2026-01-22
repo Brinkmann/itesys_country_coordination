@@ -41,7 +41,7 @@ function getAdminApp(): App {
       clientEmail,
       privateKey,
     }),
-    storageBucket: `${projectId}.firebasestorage.app`,
+    storageBucket: `${projectId}.appspot.com`,
   });
 
   return adminApp;
