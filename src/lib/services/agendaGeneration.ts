@@ -324,17 +324,18 @@ export async function generateAgenda(
     // Convert to markdown
     const markdownContent = agendaModelToMarkdown(agendaModel);
 
-    // Get next version number
+    // Get next version number - simple query without orderBy to avoid index
     const existingAgendas = await db
       .collection(COLLECTIONS.AGENDAS)
       .where('periodId', '==', periodId)
-      .orderBy('versionInt', 'desc')
-      .limit(1)
       .get();
 
-    const nextVersion = existingAgendas.empty
-      ? 1
-      : (existingAgendas.docs[0].data().versionInt ?? 0) + 1;
+    let maxVersion = 0;
+    existingAgendas.docs.forEach((doc) => {
+      const version = doc.data().versionInt ?? 0;
+      if (version > maxVersion) maxVersion = version;
+    });
+    const nextVersion = maxVersion + 1;
 
     // Store agenda
     const agendaId = uuidv4();
@@ -429,22 +430,32 @@ export async function getAgenda(agendaId: string) {
 export async function getLatestAgenda(periodId: string) {
   const db = getAdminFirestore();
 
+  // Simple query without orderBy to avoid index requirement
   const snapshot = await db
     .collection(COLLECTIONS.AGENDAS)
     .where('periodId', '==', periodId)
-    .orderBy('versionInt', 'desc')
-    .limit(1)
     .get();
 
   if (snapshot.empty) {
     return null;
   }
 
-  const doc = snapshot.docs[0];
-  const data = doc.data();
+  // Find the doc with highest versionInt in code
+  let latestDoc = snapshot.docs[0];
+  let maxVersion = latestDoc.data().versionInt ?? 0;
+
+  for (const doc of snapshot.docs) {
+    const version = doc.data().versionInt ?? 0;
+    if (version > maxVersion) {
+      maxVersion = version;
+      latestDoc = doc;
+    }
+  }
+
+  const data = latestDoc.data();
 
   return {
-    id: doc.id,
+    id: latestDoc.id,
     periodId: data.periodId,
     versionInt: data.versionInt,
     status: data.status,

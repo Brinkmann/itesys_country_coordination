@@ -8,13 +8,13 @@ import { v4 as uuidv4 } from 'uuid';
 export async function getArtefactsByPeriod(periodId: string): Promise<Artefact[]> {
   const db = getAdminFirestore();
 
+  // Simple query without orderBy to avoid index requirement
   const snapshot = await db
     .collection(COLLECTIONS.ARTEFACTS)
     .where('periodId', '==', periodId)
-    .orderBy('createdAt', 'desc')
     .get();
 
-  return snapshot.docs.map((doc) => {
+  const artefacts = snapshot.docs.map((doc) => {
     const data = doc.data();
     return {
       id: doc.id,
@@ -34,6 +34,11 @@ export async function getArtefactsByPeriod(periodId: string): Promise<Artefact[]
       mimeType: data.mimeType,
     };
   });
+
+  // Sort by createdAt descending in code
+  artefacts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+  return artefacts;
 }
 
 export async function getArtefactsByType(
@@ -42,14 +47,14 @@ export async function getArtefactsByType(
 ): Promise<Artefact[]> {
   const db = getAdminFirestore();
 
+  // Simple query without orderBy to avoid index requirement
   const snapshot = await db
     .collection(COLLECTIONS.ARTEFACTS)
     .where('periodId', '==', periodId)
     .where('type', '==', type)
-    .orderBy('createdAt', 'desc')
     .get();
 
-  return snapshot.docs.map((doc) => {
+  const artefacts = snapshot.docs.map((doc) => {
     const data = doc.data();
     return {
       id: doc.id,
@@ -69,6 +74,11 @@ export async function getArtefactsByType(
       mimeType: data.mimeType,
     };
   });
+
+  // Sort by createdAt descending in code
+  artefacts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+  return artefacts;
 }
 
 export async function getArtefact(artefactId: string): Promise<Artefact | null> {
