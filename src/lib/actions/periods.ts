@@ -280,6 +280,33 @@ export async function deletePeriod(
   return { success: true };
 }
 
+export async function updatePeriodHistorical(
+  periodId: string,
+  isHistorical: boolean
+): Promise<{ success: boolean; error?: string }> {
+  const db = getAdminFirestore();
+
+  try {
+    const doc = await db.collection(COLLECTIONS.PERIODS).doc(periodId).get();
+
+    if (!doc.exists) {
+      return { success: false, error: 'Period not found' };
+    }
+
+    await db.collection(COLLECTIONS.PERIODS).doc(periodId).update({
+      isHistorical,
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating period:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to update period',
+    };
+  }
+}
+
 export async function getExistingPeriodIds(): Promise<string[]> {
   const db = getAdminFirestore();
 
