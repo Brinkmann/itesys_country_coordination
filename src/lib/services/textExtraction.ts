@@ -29,9 +29,21 @@ export async function extractTextFromArtefact(
   try {
     const storage = getAdminStorage();
     const bucket = storage.bucket();
+
+    console.log(`[TextExtraction] Attempting to download from bucket: ${bucket.name}, path: ${storagePath}`);
+
     const file = bucket.file(storagePath);
 
+    // Check if file exists first
+    const [exists] = await file.exists();
+    if (!exists) {
+      console.error(`[TextExtraction] File does not exist: ${storagePath}`);
+      await setArtefactParseError(artefactId, `File not found in storage: ${storagePath}`);
+      return { success: false, error: `File not found in storage` };
+    }
+
     const [buffer] = await file.download();
+    console.log(`[TextExtraction] Downloaded file successfully, size: ${buffer.length} bytes`);
 
     let result: ExtractionResult;
 
@@ -55,8 +67,17 @@ export async function extractTextFromArtefact(
 
     return result;
   } catch (error) {
-    console.error('Error extracting text from artefact:', error);
-    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[TextExtraction] Error extracting text from artefact:', error);
+    let errorMsg = 'Unknown error';
+    if (error instanceof Error) {
+      errorMsg = error.message;
+      // Check for common storage errors
+      if (errorMsg.includes('403') || errorMsg.includes('permission')) {
+        errorMsg = 'Storage permission denied - check service account access to bucket';
+      } else if (errorMsg.includes('404') || errorMsg.includes('not found')) {
+        errorMsg = 'File not found in storage';
+      }
+    }
     await setArtefactParseError(artefactId, errorMsg);
     return { success: false, error: errorMsg };
   }
@@ -67,7 +88,9 @@ export async function extractTextFromArtefact(
  */
 async function extractFromPdf(buffer: Buffer): Promise<ExtractionResult> {
   try {
+    console.log(`[TextExtraction] Parsing PDF, buffer size: ${buffer.length} bytes`);
     const data = await pdfParse(buffer);
+    console.log(`[TextExtraction] PDF parsed successfully, pages: ${data.numpages}, text length: ${data.text?.length ?? 0}`);
 
     return {
       success: true,
@@ -75,7 +98,7 @@ async function extractFromPdf(buffer: Buffer): Promise<ExtractionResult> {
       pages: undefined, // pdf-parse doesn't provide page-by-page breakdown easily
     };
   } catch (error) {
-    console.error('PDF extraction error:', error);
+    console.error('[TextExtraction] PDF extraction error:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to parse PDF',
@@ -88,7 +111,9 @@ async function extractFromPdf(buffer: Buffer): Promise<ExtractionResult> {
  */
 async function extractFromDocx(buffer: Buffer): Promise<ExtractionResult> {
   try {
+    console.log(`[TextExtraction] Parsing DOCX, buffer size: ${buffer.length} bytes`);
     const result = await mammoth.extractRawText({ buffer });
+    console.log(`[TextExtraction] DOCX parsed successfully, text length: ${result.value?.length ?? 0}`);
 
     return {
       success: true,
@@ -96,7 +121,7 @@ async function extractFromDocx(buffer: Buffer): Promise<ExtractionResult> {
       pages: null as unknown as ParsedPage[] | undefined,
     };
   } catch (error) {
-    console.error('DOCX extraction error:', error);
+    console.error('[TextExtraction] DOCX extraction error:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to parse DOCX',
