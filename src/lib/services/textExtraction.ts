@@ -4,6 +4,8 @@ import mammoth from 'mammoth';
 import { updateArtefactParsedText, setArtefactParseError } from '@/lib/actions/artefacts';
 import { getAdminStorage } from '@/lib/firebase/admin';
 
+const pdfParse = require('pdf-parse') as (buffer: Buffer) => Promise<{ text: string; numpages: number }>;
+
 export interface ParsedPage {
   page: number;
   text: string;
@@ -61,40 +63,16 @@ export async function extractTextFromArtefact(
 }
 
 /**
- * Extract text from PDF buffer using pdfjs-dist
+ * Extract text from PDF buffer using pdf-parse
  */
 async function extractFromPdf(buffer: Buffer): Promise<ExtractionResult> {
   try {
-    // Dynamic import for pdfjs-dist (server-side)
-    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
-
-    const data = new Uint8Array(buffer);
-    const doc = await pdfjsLib.getDocument({ data }).promise;
-
-    const pages: ParsedPage[] = [];
-    const textParts: string[] = [];
-
-    for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
-      const page = await doc.getPage(pageNum);
-      const textContent = await page.getTextContent();
-
-      const pageText = textContent.items
-        .map((item) => ('str' in item ? item.str : ''))
-        .filter(Boolean)
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      pages.push({ page: pageNum, text: pageText });
-      textParts.push(pageText);
-    }
-
-    const fullText = textParts.join('\n\n');
+    const data = await pdfParse(buffer);
 
     return {
       success: true,
-      text: fullText,
-      pages,
+      text: data.text,
+      pages: undefined, // pdf-parse doesn't provide page-by-page breakdown easily
     };
   } catch (error) {
     console.error('PDF extraction error:', error);
