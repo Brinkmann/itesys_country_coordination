@@ -1,10 +1,9 @@
 'use server';
 
 import mammoth from 'mammoth';
+import { extractText, getDocumentProxy } from 'unpdf';
 import { updateArtefactParsedText, setArtefactParseError } from '@/lib/actions/artefacts';
 import { getAdminStorage } from '@/lib/firebase/admin';
-
-const pdfParse = require('pdf-parse') as (buffer: Buffer) => Promise<{ text: string; numpages: number }>;
 
 export interface ParsedPage {
   page: number;
@@ -84,18 +83,29 @@ export async function extractTextFromArtefact(
 }
 
 /**
- * Extract text from PDF buffer using pdf-parse
+ * Extract text from PDF buffer using unpdf (serverless-compatible)
  */
 async function extractFromPdf(buffer: Buffer): Promise<ExtractionResult> {
   try {
-    console.log(`[TextExtraction] Parsing PDF, buffer size: ${buffer.length} bytes`);
-    const data = await pdfParse(buffer);
-    console.log(`[TextExtraction] PDF parsed successfully, pages: ${data.numpages}, text length: ${data.text?.length ?? 0}`);
+    console.log(`[TextExtraction] Parsing PDF with unpdf, buffer size: ${buffer.length} bytes`);
+
+    // Convert Buffer to Uint8Array for unpdf
+    const uint8Array = new Uint8Array(buffer);
+
+    // Get document proxy to access page count
+    const pdf = await getDocumentProxy(uint8Array);
+    const numPages = pdf.numPages;
+    console.log(`[TextExtraction] PDF has ${numPages} pages`);
+
+    // Extract text from all pages
+    const { text } = await extractText(uint8Array, { mergePages: true });
+
+    console.log(`[TextExtraction] PDF parsed successfully, text length: ${text?.length ?? 0}`);
 
     return {
       success: true,
-      text: data.text,
-      pages: undefined, // pdf-parse doesn't provide page-by-page breakdown easily
+      text: text || '',
+      pages: undefined,
     };
   } catch (error) {
     console.error('[TextExtraction] PDF extraction error:', error);
