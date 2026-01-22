@@ -30,6 +30,7 @@ export default function PeriodWorkspacePage() {
 
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(true);
   const [period, setPeriod] = useState<Period | null>(null);
   const [artefacts, setArtefacts] = useState<Artefact[]>([]);
   const [actions, setActions] = useState<ActionItem[]>([]);
@@ -52,6 +53,7 @@ export default function PeriodWorkspacePage() {
   }, [router]);
 
   const loadData = useCallback(async () => {
+    setDataLoading(true);
     try {
       const [periodData, artefactsData, actionsData, carryOverData, agendaData] = await Promise.all([
         getPeriod(periodId),
@@ -92,6 +94,8 @@ export default function PeriodWorkspacePage() {
       setExtractionPreviews(previews);
     } catch (error) {
       console.error('Error loading data:', error);
+    } finally {
+      setDataLoading(false);
     }
   }, [periodId, router]);
 
@@ -237,7 +241,7 @@ export default function PeriodWorkspacePage() {
     return missing;
   };
 
-  if (loading) {
+  if (loading || dataLoading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', padding: '48px' }}>
         <div className="loading-spinner" />
@@ -245,8 +249,22 @@ export default function PeriodWorkspacePage() {
     );
   }
 
-  if (!user || !period) {
+  if (!user) {
     return null;
+  }
+
+  if (!period) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '48px' }}>
+        <div style={{ textAlign: 'center' }}>
+          <h2>Period not found</h2>
+          <p style={{ color: '#6b7280', marginTop: 8 }}>The period {periodId} does not exist.</p>
+          <Link href="/periods" className="btn btn-primary" style={{ marginTop: 16, display: 'inline-block' }}>
+            Back to Periods
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   const progress = getTaskProgress();
