@@ -137,10 +137,19 @@ export default function PeriodWorkspacePage() {
           continue;
         }
 
-        // Extract text from the uploaded file
+        // Extract text from the uploaded file (don't fail if extraction fails)
         if (result.artefactId) {
-          const storagePath = `artefacts/${periodId}/${type}/${result.artefactId}/${file.name}`;
-          await extractTextFromArtefact(result.artefactId, storagePath, file.type);
+          try {
+            const storagePath = `artefacts/${periodId}/${type}/${result.artefactId}/${file.name}`;
+            const extractResult = await extractTextFromArtefact(result.artefactId, storagePath, file.type);
+            if (!extractResult.success) {
+              console.error('Text extraction failed:', extractResult.error);
+              // Don't alert - the file is uploaded, extraction error is shown on the document
+            }
+          } catch (extractError) {
+            console.error('Text extraction error:', extractError);
+            // Don't fail the whole upload if extraction fails
+          }
         }
       }
 
