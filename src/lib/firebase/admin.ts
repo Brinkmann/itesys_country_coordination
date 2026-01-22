@@ -41,7 +41,7 @@ function getAdminApp(): App {
       clientEmail,
       privateKey,
     }),
-    storageBucket: `${projectId}.appspot.com`,
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || `${projectId}-storage`,
   });
 
   return adminApp;
