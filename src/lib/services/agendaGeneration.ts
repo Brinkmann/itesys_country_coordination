@@ -40,19 +40,28 @@ interface FinanceExtraction {
 }
 
 interface ProductivityExtraction {
-  metrics: Array<{
-    name: string;
-    value: string;
-    change: string | null;
-    evidence_ref: { page: number | null; quote: string };
+  teamMetrics: {
+    chargeableHours: number;
+    internalHours: number;
+    totalProductiveHours: number;
+    chargeabilityPercent: number;
+    sourceRef: { page: number | null; quote: string };
+  };
+  personMetrics: Array<{
+    personName: string;
+    chargeableHours: number;
+    internalHours: number;
+    totalProductiveHours: number;
+    chargeabilityPercent: number;
+    sourceRef: { row: number | null; quote: string };
   }>;
   highlights: Array<{
     text: string;
-    evidence_ref: { page: number | null; quote: string };
+    sourceRef: { page: number | null; quote: string };
   }>;
   concerns: Array<{
     text: string;
-    evidence_ref: { page: number | null; quote: string };
+    sourceRef: { page: number | null; quote: string };
   }>;
 }
 
