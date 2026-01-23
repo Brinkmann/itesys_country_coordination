@@ -11,7 +11,13 @@ import {
   AgendaSection,
   Extraction,
   EvidenceRef,
+  FinanceExtraction as TypedFinanceExtraction,
+  ProductivityExtraction as TypedProductivityExtraction,
+  getPreviousPeriods,
+  getFYPeriods,
+  formatPeriodLabel,
 } from '@/lib/types';
+import { getExtractionsForPeriods } from '@/lib/actions/extractions';
 
 // Extraction schemas
 interface FinanceExtraction {
@@ -270,9 +276,58 @@ export async function generateAgenda(
       }
     }
 
+    // Fetch prior period extractions for cross-period comparison
+    const priorPeriodIds = getPreviousPeriods(periodId, 3); // Last 3 months for MoM
+    const fyPeriodIds = getFYPeriods(periodId, 4); // FY periods (April start for NZ)
+
+    // Combine unique period IDs for querying
+    const allPriorPeriodIds = [...new Set([...priorPeriodIds, ...fyPeriodIds])];
+
+    // Fetch prior finance and productivity extractions
+    const priorFinanceExtractions = await getExtractionsForPeriods(allPriorPeriodIds, 'finance');
+    const priorProductivityExtractions = await getExtractionsForPeriods(allPriorPeriodIds, 'productivity');
+
+    // Build prior period comparison data
+    const priorPeriodData = {
+      // Previous month data for MoM comparison
+      previous_month: priorPeriodIds[0] ? {
+        period: priorPeriodIds[0],
+        period_label: formatPeriodLabel(priorPeriodIds[0]),
+        finance: priorFinanceExtractions
+          .filter(e => e.periodId === priorPeriodIds[0])
+          .map(e => ({ extraction_id: e.id, ...e.payload })),
+        productivity: priorProductivityExtractions
+          .filter(e => e.periodId === priorPeriodIds[0])
+          .map(e => ({ extraction_id: e.id, ...e.payload })),
+      } : null,
+      // FY to date aggregated metrics
+      fy_periods: fyPeriodIds.map(pid => ({
+        period: pid,
+        period_label: formatPeriodLabel(pid),
+        finance: priorFinanceExtractions
+          .filter(e => e.periodId === pid)
+          .map(e => ({ extraction_id: e.id, ...e.payload })),
+        productivity: priorProductivityExtractions
+          .filter(e => e.periodId === pid)
+          .map(e => ({ extraction_id: e.id, ...e.payload })),
+      })),
+      // Last 3 months trend data
+      trend_periods: priorPeriodIds.map(pid => ({
+        period: pid,
+        period_label: formatPeriodLabel(pid),
+        finance: priorFinanceExtractions
+          .filter(e => e.periodId === pid)
+          .map(e => ({ extraction_id: e.id, ...e.payload })),
+        productivity: priorProductivityExtractions
+          .filter(e => e.periodId === pid)
+          .map(e => ({ extraction_id: e.id, ...e.payload })),
+      })),
+    };
+
     // Build input payload for agenda generation
     const inputPayload = {
       period: periodId,
+      period_label: formatPeriodLabel(periodId),
       language,
       facts_only: factsOnly,
       finance: financeExtractions.map((e) => ({
@@ -295,6 +350,8 @@ export async function generateAgenda(
         due_date: a.dueDate?.toISOString() ?? null,
         period_created: a.periodIdCreated,
       })),
+      // Cross-period comparison data
+      prior_periods: priorPeriodData,
     };
 
     // Generate agenda
@@ -367,10 +424,14 @@ export async function generateAgenda(
 function agendaModelToMarkdown(agenda: AgendaModel): string {
   const lines: string[] = [];
 
-  lines.push(`# Agenda - ${agenda.period}`);
+  // Format period label nicely
+  const periodLabel = formatPeriodLabel(agenda.period);
+
+  lines.push(`# Board Meeting Agenda - ${periodLabel}`);
   lines.push('');
-  lines.push(`**Language:** ${agenda.language === 'de' ? 'German' : 'English'}`);
-  lines.push(`**Mode:** ${agenda.facts_only ? 'Facts Only' : 'Full'}`);
+  lines.push(`**Periode:** ${agenda.period}`);
+  lines.push(`**Sprache:** ${agenda.language === 'de' ? 'Deutsch' : 'Englisch'}`);
+  lines.push(`**Modus:** ${agenda.facts_only ? 'Nur Fakten' : 'Vollständig'}`);
   lines.push('');
   lines.push('---');
   lines.push('');
@@ -380,14 +441,16 @@ function agendaModelToMarkdown(agenda: AgendaModel): string {
     lines.push('');
 
     for (const bullet of section.bullets) {
-      lines.push(`- ${bullet.text}`);
+      // Mark key topics with emphasis
+      const keyMarker = bullet.is_key_topic ? '**' : '';
+      lines.push(`- ${keyMarker}${bullet.text}${keyMarker}`);
 
-      // Add evidence refs as sub-bullets if present
+      // Add evidence refs as sub-bullets if present (for traceability)
       if (bullet.evidence_refs && bullet.evidence_refs.length > 0) {
         for (const ref of bullet.evidence_refs) {
-          const pageInfo = ref.page ? ` (p. ${ref.page})` : '';
+          const pageInfo = ref.page ? ` (S. ${ref.page})` : '';
           const quote = ref.quote ? `: "${ref.quote}"` : '';
-          lines.push(`  - *Source: ${ref.artefact_id}${pageInfo}${quote}*`);
+          lines.push(`  - *Quelle: ${ref.artefact_id}${pageInfo}${quote}*`);
         }
       }
     }
