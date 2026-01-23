@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { auth } from '@/lib/firebase/client';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { getHistoricalPeriods, createPeriod, getExistingPeriodIds } from '@/lib/actions/periods';
-import { PeriodWithStats, formatPeriodLabel, getCurrentNZPeriod } from '@/lib/types';
+import { getHistoricalPeriods, createPeriod, getExistingPeriodIds, updatePeriodHistorical } from '@/lib/actions/periods';
+import { PeriodWithStats, formatPeriodLabel } from '@/lib/types';
 
 export default function HistoricalDataPage() {
   const router = useRouter();
@@ -41,6 +41,18 @@ export default function HistoricalDataPage() {
     }
   };
 
+  const handleMoveToPeriods = async (periodId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm(`Move ${periodId} to Periods?`)) return;
+
+    const result = await updatePeriodHistorical(periodId, false);
+    if (result.success) {
+      loadPeriods();
+    } else {
+      alert(result.error || 'Failed to move period');
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', padding: '48px' }}>
@@ -58,115 +70,57 @@ export default function HistoricalDataPage() {
       <div className="page-header">
         <div className="page-header-content">
           <h1>Historical Data</h1>
-          <p>Upload and manage historical board documents. New periods will reference this cumulative dataset.</p>
+          <p>Archive of past board meeting periods and documents.</p>
         </div>
         <button className="btn btn-primary" onClick={() => setShowModal(true)}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="12" y1="5" x2="12" y2="19" />
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
-          Add Historical Period
+          Add Period
         </button>
-      </div>
-
-      <div className="info-banner">
-        <div className="info-banner-icon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="10" />
-            <polyline points="12 6 12 12 16 14" />
-          </svg>
-        </div>
-        <div className="info-banner-content">
-          <h3>How Historical Data Works</h3>
-          <p>
-            When you create a new period, it automatically has access to all historical data from previous periods.
-            This allows the AI to reference past financials, minutes, and decisions when generating agendas.
-            Upload documents from past board meetings to build your historical context.
-          </p>
-        </div>
       </div>
 
       {periods.length === 0 ? (
         <div className="card">
           <div className="empty-state">
             <svg className="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="16" y1="13" x2="8" y2="13" />
-              <line x1="16" y1="17" x2="8" y2="17" />
+              <path d="M3 3v18h18" />
+              <path d="M7 16l4-4 4 4 6-6" />
             </svg>
             <h3>No historical data yet</h3>
-            <p>Add historical periods to build context for AI-generated agendas.</p>
+            <p>Add historical periods to archive past board meeting materials.</p>
+            <button
+              className="btn btn-primary"
+              onClick={() => setShowModal(true)}
+              style={{ marginTop: '16px' }}
+            >
+              Add Period
+            </button>
           </div>
         </div>
       ) : (
         <div className="card-grid">
           {periods.map((period) => (
-            <div
+            <HistoricalPeriodCard
               key={period.id}
-              className="period-card"
+              period={period}
+              onMove={handleMoveToPeriods}
               onClick={() => router.push(`/periods/${period.id}`)}
-            >
-              <div className="period-card-header">
-                <div className="period-card-title">
-                  <svg className="period-card-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                    <line x1="16" y1="2" x2="16" y2="6" />
-                    <line x1="8" y1="2" x2="8" y2="6" />
-                    <line x1="3" y1="10" x2="21" y2="10" />
-                  </svg>
-                  <div>
-                    <h3>{period.label}</h3>
-                    <div className="period-card-id">{period.id}</div>
-                  </div>
-                </div>
-                <span className="badge badge-historical">Historical</span>
-              </div>
-
-              <div className="period-card-badges">
-                {period.artefactCounts.finance > 0 && (
-                  <span className="badge badge-type">finance: {period.artefactCounts.finance}</span>
-                )}
-                {period.artefactCounts.productivity > 0 && (
-                  <span className="badge badge-type">productivity: {period.artefactCounts.productivity}</span>
-                )}
-                {period.artefactCounts.minutes > 0 && (
-                  <span className="badge badge-type">minutes: {period.artefactCounts.minutes}</span>
-                )}
-              </div>
-
-              <div className="period-card-footer">
-                <span className="period-card-count">
-                  {period.totalArtefacts} document{period.totalArtefacts !== 1 ? 's' : ''}
-                </span>
-                <button
-                  className="btn btn-secondary"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    router.push(`/periods/${period.id}`);
-                  }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="17 8 12 3 7 8" />
-                    <line x1="12" y1="3" x2="12" y2="15" />
-                  </svg>
-                  Upload
-                </button>
-              </div>
-            </div>
+            />
           ))}
         </div>
       )}
 
       {showModal && (
-        <CreateHistoricalPeriodModal
+        <CreatePeriodModal
           existingIds={existingIds}
           userId={user.uid}
+          isHistorical={true}
           onClose={() => setShowModal(false)}
           onCreated={(periodId) => {
             setShowModal(false);
-            loadPeriods();
+            router.push(`/periods/${periodId}`);
           }}
         />
       )}
@@ -174,14 +128,132 @@ export default function HistoricalDataPage() {
   );
 }
 
-function CreateHistoricalPeriodModal({
+function HistoricalPeriodCard({
+  period,
+  onMove,
+  onClick,
+}: {
+  period: PeriodWithStats;
+  onMove: (periodId: string, e: React.MouseEvent) => void;
+  onClick: () => void;
+}) {
+  const [showMenu, setShowMenu] = useState(false);
+
+  return (
+    <div className="period-card" onClick={onClick}>
+      <div className="period-card-header">
+        <div className="period-card-title">
+          <svg className="period-card-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+            <line x1="16" y1="2" x2="16" y2="6" />
+            <line x1="8" y1="2" x2="8" y2="6" />
+            <line x1="3" y1="10" x2="21" y2="10" />
+          </svg>
+          <div>
+            <h3>{period.label}</h3>
+            <div className="period-card-id">{period.id}</div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="badge" style={{ background: '#f3f4f6', color: '#6b7280' }}>Historical</span>
+          <div style={{ position: 'relative' }}>
+            <button
+              className="btn btn-ghost"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowMenu(!showMenu);
+              }}
+              style={{ padding: 4 }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="1" />
+                <circle cx="12" cy="5" r="1" />
+                <circle cx="12" cy="19" r="1" />
+              </svg>
+            </button>
+            {showMenu && (
+              <div
+                className="dropdown-menu"
+                style={{
+                  position: 'absolute',
+                  right: 0,
+                  top: '100%',
+                  background: '#fff',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 8,
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                  zIndex: 10,
+                  minWidth: 160,
+                }}
+              >
+                <button
+                  onClick={(e) => {
+                    setShowMenu(false);
+                    onMove(period.id, e);
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    padding: '10px 12px',
+                    border: 'none',
+                    background: 'none',
+                    cursor: 'pointer',
+                    fontSize: 14,
+                    textAlign: 'left',
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                  </svg>
+                  Move to Periods
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="period-card-badges">
+        {period.artefactCounts.finance > 0 && (
+          <span className="badge badge-type">finance: {period.artefactCounts.finance}</span>
+        )}
+        {period.artefactCounts.productivity > 0 && (
+          <span className="badge badge-type">productivity: {period.artefactCounts.productivity}</span>
+        )}
+        {period.artefactCounts.minutes > 0 && (
+          <span className="badge badge-type">minutes: {period.artefactCounts.minutes}</span>
+        )}
+      </div>
+
+      <div className="period-card-footer">
+        <span className="period-card-count">
+          {period.totalArtefacts} document{period.totalArtefacts !== 1 ? 's' : ''}
+        </span>
+        {period.hasFinalAgenda ? (
+          <span className="badge badge-final">Final Agenda</span>
+        ) : period.hasAgenda ? (
+          <span className="badge badge-draft">Draft Agenda</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function CreatePeriodModal({
   existingIds,
   userId,
+  isHistorical,
   onClose,
   onCreated,
 }: {
   existingIds: string[];
   userId: string;
+  isHistorical: boolean;
   onClose: () => void;
   onCreated: (periodId: string) => void;
 }) {
@@ -189,30 +261,6 @@ function CreateHistoricalPeriodModal({
   const [label, setLabel] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
-
-  // Generate quick select options for past months
-  const currentPeriod = getCurrentNZPeriod();
-  const quickSelectOptions: { id: string; label: string }[] = [];
-
-  for (let i = 1; i <= 12; i++) {
-    const date = new Date();
-    date.setMonth(date.getMonth() - i);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const id = `${year}-${month}`;
-    if (!existingIds.includes(id)) {
-      quickSelectOptions.push({
-        id,
-        label: formatPeriodLabel(id),
-      });
-    }
-    if (quickSelectOptions.length >= 6) break;
-  }
-
-  const handleQuickSelect = (id: string) => {
-    setPeriodId(id);
-    setLabel(formatPeriodLabel(id));
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -223,15 +271,10 @@ function CreateHistoricalPeriodModal({
       return;
     }
 
-    if (periodId >= currentPeriod) {
-      setError('Historical periods must be in the past');
-      return;
-    }
-
     setCreating(true);
     try {
       const result = await createPeriod(
-        { id: periodId, label, isHistorical: true },
+        { id: periodId, label, isHistorical },
         userId
       );
 
@@ -259,8 +302,8 @@ function CreateHistoricalPeriodModal({
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-header-content">
-            <h2>Create Historical Period</h2>
-            <p>Add a past period to upload historical documents. This data will be available as reference for future periods.</p>
+            <h2>Add Period</h2>
+            <p>Create a new {isHistorical ? 'historical ' : ''}period for board meeting preparation.</p>
           </div>
           <button className="modal-close" onClick={onClose}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -272,31 +315,13 @@ function CreateHistoricalPeriodModal({
 
         <form onSubmit={handleSubmit}>
           <div className="modal-body">
-            {quickSelectOptions.length > 0 && (
-              <div className="quick-select">
-                <span className="quick-select-label">Quick Select</span>
-                <div className="quick-select-options">
-                  {quickSelectOptions.map((option) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      className={`quick-select-btn ${periodId === option.id ? 'selected' : ''}`}
-                      onClick={() => handleQuickSelect(option.id)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
             <div className="form-row">
               <div className="form-group">
                 <label className="form-label">Period ID (YYYY-MM)</label>
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="2024-06"
+                  placeholder="2025-12"
                   value={periodId}
                   onChange={(e) => handlePeriodIdChange(e.target.value)}
                   required
@@ -307,7 +332,7 @@ function CreateHistoricalPeriodModal({
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="June 2024"
+                  placeholder="December 2025"
                   value={label}
                   onChange={(e) => setLabel(e.target.value)}
                   required

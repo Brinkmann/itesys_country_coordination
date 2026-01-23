@@ -6,19 +6,22 @@ import Link from 'next/link';
 import { auth } from '@/lib/firebase/client';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { getPeriod } from '@/lib/actions/periods';
-import { getArtefactsByPeriod, createArtefact, deleteArtefact } from '@/lib/actions/artefacts';
+import { getArtefactsByPeriod, createArtefactRecord, deleteArtefact, getUploadUrl } from '@/lib/actions/artefacts';
 import { getActionsByPeriod, getCarryOverActions, createAction, updateAction, deleteAction } from '@/lib/actions/actions';
 import { extractTextFromArtefact } from '@/lib/services/textExtraction';
+import { extractMetricsFromText } from '@/lib/services/metricsExtraction';
 import { generateAgenda, getLatestAgenda } from '@/lib/services/agendaGeneration';
+import { uploadFileToSignedUrl } from '@/lib/services/storageUpload';
 import { Period, Artefact, ActionItem, ArtefactType, AgendaModel, formatPeriodLabel } from '@/lib/types';
 
-type ArtefactTabKey = 'finance' | 'productivity' | 'minutes' | 'other';
+type ArtefactTabKey = 'finance' | 'productivity' | 'absence' | 'minutes' | 'other';
 type TabKey = ArtefactTabKey | 'agenda' | 'actions';
 
 // Updated labels to match user's terminology
-const ARTEFACT_TABS: { key: ArtefactTabKey; label: string; title: string; description: string }[] = [
+const ARTEFACT_TABS: { key: ArtefactTabKey; label: string; title: string; description: string; accept?: string }[] = [
   { key: 'finance', label: 'Management Report', title: 'Management Report', description: 'Upload financial reports and management summaries. The AI will extract key metrics and trends.' },
   { key: 'productivity', label: 'Protime', title: 'Protime Reports', description: 'Upload Protime reports with employee profitability and utilization data.' },
+  { key: 'absence', label: 'Absences', title: 'Absence Records', description: 'Upload absence/leave data (Excel). Types: SICK, ANL (annual leave), WELL (wellness), ALT (in-lieu).', accept: '.xlsx,.xls,.csv' },
   { key: 'minutes', label: 'Meeting Minutes', title: 'Meeting Minutes', description: 'Upload previous meeting minutes or transcripts. The AI will extract decisions and action items.' },
   { key: 'other', label: 'Other', title: 'Other Documents', description: 'Upload any additional documents relevant to the board meeting.' },
 ];
@@ -30,6 +33,7 @@ export default function PeriodWorkspacePage() {
 
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(true);
   const [period, setPeriod] = useState<Period | null>(null);
   const [artefacts, setArtefacts] = useState<Artefact[]>([]);
   const [actions, setActions] = useState<ActionItem[]>([]);
@@ -52,6 +56,7 @@ export default function PeriodWorkspacePage() {
   }, [router]);
 
   const loadData = useCallback(async () => {
+    setDataLoading(true);
     try {
       const [periodData, artefactsData, actionsData, carryOverData, agendaData] = await Promise.all([
         getPeriod(periodId),
@@ -92,6 +97,8 @@ export default function PeriodWorkspacePage() {
       setExtractionPreviews(previews);
     } catch (error) {
       console.error('Error loading data:', error);
+    } finally {
+      setDataLoading(false);
     }
   }, [periodId, router]);
 
@@ -107,36 +114,75 @@ export default function PeriodWorkspacePage() {
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
-        // Read file as base64
-        const base64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const result = reader.result as string;
-            resolve(result.split(',')[1]);
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
+        console.log(`[Upload] Starting upload for ${file.name} (${Math.round(file.size / 1024)} KB)`);
 
-        // Upload artefact
-        const result = await createArtefact(
-          periodId,
-          type,
-          file.name,
-          base64,
-          file.type,
-          user.uid
-        );
-
-        if (!result.success) {
-          alert(result.error || 'Failed to upload file');
+        // Step 1: Get a signed upload URL from the server
+        const urlResult = await getUploadUrl(periodId, type, file.name, file.type);
+        if (!urlResult.success || !urlResult.uploadUrl || !urlResult.storagePath || !urlResult.artefactId) {
+          alert(urlResult.error || 'Failed to get upload URL');
           continue;
         }
 
-        // Extract text from the uploaded file
-        if (result.artefactId) {
-          const storagePath = `artefacts/${periodId}/${type}/${result.artefactId}/${file.name}`;
-          await extractTextFromArtefact(result.artefactId, storagePath, file.type);
+        // Step 2: Upload directly to the signed URL (bypasses all size limits)
+        const uploadResult = await uploadFileToSignedUrl(file, urlResult.uploadUrl, (progress) => {
+          console.log(`[Upload] Progress: ${Math.round(progress.progress)}%`);
+        });
+
+        if (!uploadResult.success) {
+          alert(uploadResult.error || 'Failed to upload file');
+          continue;
+        }
+
+        // Step 3: Create artefact record in Firestore
+        const recordResult = await createArtefactRecord(
+          periodId,
+          type,
+          file.name,
+          urlResult.storagePath,
+          file.type,
+          file.size,
+          user.uid
+        );
+
+        if (!recordResult.success) {
+          alert(recordResult.error || 'Failed to create artefact record');
+          continue;
+        }
+
+        console.log(`[Upload] File uploaded successfully, starting text extraction`);
+
+        // Step 4: Extract text from the uploaded file (don't fail if extraction fails)
+        let extractedText: string | undefined;
+        try {
+          const extractResult = await extractTextFromArtefact(urlResult.artefactId, urlResult.storagePath, file.type);
+          if (!extractResult.success) {
+            console.error('Text extraction failed:', extractResult.error);
+          } else {
+            console.log(`[Upload] Text extraction completed successfully`);
+            extractedText = extractResult.text;
+          }
+        } catch (extractError) {
+          console.error('Text extraction error:', extractError);
+        }
+
+        // Step 5: Extract normalized metrics from the text (for cross-period comparison)
+        if (extractedText) {
+          try {
+            console.log(`[Upload] Starting metrics extraction for ${type} document`);
+            const metricsResult = await extractMetricsFromText(
+              urlResult.artefactId,
+              periodId,
+              type,
+              extractedText
+            );
+            if (metricsResult.success) {
+              console.log(`[Upload] Metrics extraction completed`);
+            } else if (metricsResult.error) {
+              console.error('Metrics extraction failed:', metricsResult.error);
+            }
+          } catch (metricsError) {
+            console.error('Metrics extraction error:', metricsError);
+          }
         }
       }
 
@@ -237,7 +283,7 @@ export default function PeriodWorkspacePage() {
     return missing;
   };
 
-  if (loading) {
+  if (loading || dataLoading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', padding: '48px' }}>
         <div className="loading-spinner" />
@@ -245,8 +291,22 @@ export default function PeriodWorkspacePage() {
     );
   }
 
-  if (!user || !period) {
+  if (!user) {
     return null;
+  }
+
+  if (!period) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '48px' }}>
+        <div style={{ textAlign: 'center' }}>
+          <h2>Period not found</h2>
+          <p style={{ color: '#6b7280', marginTop: 8 }}>The period {periodId} does not exist.</p>
+          <Link href="/periods" className="btn btn-primary" style={{ marginTop: 16, display: 'inline-block' }}>
+            Back to Periods
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   const progress = getTaskProgress();
@@ -367,6 +427,7 @@ export default function PeriodWorkspacePage() {
                 onUpload={(files) => handleFileUpload(files, tab.key)}
                 onDelete={handleDeleteArtefact}
                 uploading={uploading}
+                accept={tab.accept}
               />
             ) : null
           )}
@@ -448,6 +509,7 @@ function ArtefactSection({
   onUpload,
   onDelete,
   uploading,
+  accept,
 }: {
   title: string;
   description: string;
@@ -456,6 +518,7 @@ function ArtefactSection({
   onUpload: (files: FileList) => void;
   onDelete: (id: string) => void;
   uploading: boolean;
+  accept?: string;
 }) {
   const [dragover, setDragover] = useState(false);
 
@@ -541,7 +604,7 @@ function ArtefactSection({
         <input
           id={`file-input-${type}`}
           type="file"
-          accept=".pdf,.docx,.doc"
+          accept={accept || '.pdf,.docx,.doc'}
           multiple
           onChange={handleFileSelect}
           style={{ display: 'none' }}

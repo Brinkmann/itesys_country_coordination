@@ -5,16 +5,51 @@ import { Artefact, ArtefactType, ArtefactVisibility } from '@/lib/types';
 import { Timestamp } from 'firebase-admin/firestore';
 import { v4 as uuidv4 } from 'uuid';
 
+/**
+ * Generate a signed URL for direct upload to storage
+ * This bypasses client-side Firebase auth issues with custom buckets
+ */
+export async function getUploadUrl(
+  periodId: string,
+  type: ArtefactType,
+  filename: string,
+  mimeType: string
+): Promise<{ success: boolean; uploadUrl?: string; storagePath?: string; artefactId?: string; error?: string }> {
+  try {
+    const storage = getAdminStorage();
+    const bucket = storage.bucket();
+    const artefactId = uuidv4();
+    const storagePath = `${STORAGE_PATHS.ARTEFACTS}/${periodId}/${type}/${artefactId}/${filename}`;
+    const file = bucket.file(storagePath);
+
+    // Generate a signed URL for uploading (valid for 15 minutes)
+    const [uploadUrl] = await file.getSignedUrl({
+      version: 'v4',
+      action: 'write',
+      expires: Date.now() + 15 * 60 * 1000, // 15 minutes
+      contentType: mimeType,
+    });
+
+    return { success: true, uploadUrl, storagePath, artefactId };
+  } catch (error) {
+    console.error('Error generating upload URL:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to generate upload URL',
+    };
+  }
+}
+
 export async function getArtefactsByPeriod(periodId: string): Promise<Artefact[]> {
   const db = getAdminFirestore();
 
+  // Simple query without orderBy to avoid index requirement
   const snapshot = await db
     .collection(COLLECTIONS.ARTEFACTS)
     .where('periodId', '==', periodId)
-    .orderBy('createdAt', 'desc')
     .get();
 
-  return snapshot.docs.map((doc) => {
+  const artefacts = snapshot.docs.map((doc) => {
     const data = doc.data();
     return {
       id: doc.id,
@@ -34,6 +69,11 @@ export async function getArtefactsByPeriod(periodId: string): Promise<Artefact[]
       mimeType: data.mimeType,
     };
   });
+
+  // Sort by createdAt descending in code
+  artefacts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+  return artefacts;
 }
 
 export async function getArtefactsByType(
@@ -42,14 +82,14 @@ export async function getArtefactsByType(
 ): Promise<Artefact[]> {
   const db = getAdminFirestore();
 
+  // Simple query without orderBy to avoid index requirement
   const snapshot = await db
     .collection(COLLECTIONS.ARTEFACTS)
     .where('periodId', '==', periodId)
     .where('type', '==', type)
-    .orderBy('createdAt', 'desc')
     .get();
 
-  return snapshot.docs.map((doc) => {
+  const artefacts = snapshot.docs.map((doc) => {
     const data = doc.data();
     return {
       id: doc.id,
@@ -69,6 +109,11 @@ export async function getArtefactsByType(
       mimeType: data.mimeType,
     };
   });
+
+  // Sort by createdAt descending in code
+  artefacts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+  return artefacts;
 }
 
 export async function getArtefact(artefactId: string): Promise<Artefact | null> {
@@ -153,6 +198,54 @@ export async function createArtefact(
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to create artefact',
+    };
+  }
+}
+
+/**
+ * Create an artefact record for a file that was uploaded directly to storage
+ * (Used with client-side direct uploads to bypass serverless size limits)
+ */
+export async function createArtefactRecord(
+  periodId: string,
+  type: ArtefactType,
+  filename: string,
+  storagePath: string,
+  mimeType: string,
+  fileSize: number,
+  userId: string,
+  tags: string[] = [],
+  visibility: ArtefactVisibility = 'normal'
+): Promise<{ success: boolean; artefactId?: string; error?: string }> {
+  const db = getAdminFirestore();
+
+  try {
+    const artefactId = storagePath.split('/')[3]; // Extract artefactId from path: artefacts/{periodId}/{type}/{artefactId}/{filename}
+
+    // Create artefact document
+    await db.collection(COLLECTIONS.ARTEFACTS).doc(artefactId).set({
+      periodId,
+      type,
+      filename,
+      storagePath,
+      uploadedBy: userId,
+      createdAt: Timestamp.now(),
+      versionInt: 1,
+      tags,
+      parsedText: null,
+      parsedPages: null,
+      visibility,
+      parseError: null,
+      fileSize,
+      mimeType,
+    });
+
+    return { success: true, artefactId };
+  } catch (error) {
+    console.error('Error creating artefact record:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to create artefact record',
     };
   }
 }

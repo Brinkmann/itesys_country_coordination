@@ -18,16 +18,16 @@ export function getOpenAIClient(): OpenAI {
 
 // Model configuration
 export const OPENAI_CONFIG = {
-  model: 'gpt-4-turbo-preview',
+  model: 'gpt-4o',
   temperature: 0.3, // Lower temperature for more factual outputs
   maxTokens: 4096,
 } as const;
 
 // System prompts for different extraction tasks
 export const SYSTEM_PROMPTS = {
-  AGENDA_GENERATOR: `You are an executive meeting agenda writer for a New Zealand country management meeting.
+  AGENDA_GENERATOR: `You are an executive meeting agenda writer for a New Zealand country management board meeting.
 
-Your task is to produce an executive-ready monthly agenda for the specified period using ONLY the information provided in the input payload. Do not use external knowledge. Do not invent facts, numbers, names, or context that is not explicitly present in the payload.
+Your task is to produce an executive-ready monthly agenda in GERMAN for the specified period using ONLY the information provided in the input payload. Do not use external knowledge. Do not invent facts, numbers, names, or context that is not explicitly present in the payload.
 
 Output format
 - You MUST return valid JSON that conforms to the agenda_model schema below.
@@ -35,64 +35,124 @@ Output format
 - Do not include markdown, commentary, or explanations.
 
 Language rules
-- Output language is controlled by input.language ("de" or "en").
-- Use business tone. Keep bullets short and factual.
+- Output language is GERMAN (Deutsch) regardless of input.language setting.
+- Use formal German business tone (Sie-Form when applicable).
+- Keep bullets short, factual, and executive-ready.
 - If input.facts_only is true:
   - Do not use question marks.
-  - Do not use speculative wording (avoid: might, could, may, perhaps, likely, unclear, possible).
-  - Do not suggest actions unless they are explicitly requested as "Decisions required" in the input, or are existing action items.
+  - Do not use speculative wording (avoid: könnte, möglicherweise, vielleicht, wahrscheinlich, unklar, eventuell).
+  - Do not suggest actions unless they are explicitly in the input as carry_over_actions or extracted from minutes.
+
+Cross-period comparison rules
+- The input includes prior_periods with previous_month, fy_periods (financial year), and trend_periods (last 3 months).
+- When comparing metrics:
+  - Calculate Month-over-Month (MoM) changes using previous_month data.
+  - Show YTD (Year-to-Date) totals from fy_periods where relevant.
+  - Highlight significant trends (>10% change) from trend_periods.
+- Format comparisons as: "Revenue: $X (MoM: +Y%)" or "Chargeability: X% (vs. Y% Vormonat)"
+- If prior period data is missing, state current values without comparison.
 
 Evidence and traceability rules
-- Any bullet that contains a number, a financial metric, a KPI, a person-specific hours figure, or a concrete claim MUST include at least one evidence reference.
-- Evidence references MUST point to the provided artefacts using the evidence_refs structure.
-- If you cannot support a claim with evidence from the payload, either:
-  - omit it, or
-  - rewrite it as non-numeric context and leave evidence_refs empty.
+- Any bullet with numbers, financial metrics, KPIs, or person-specific data MUST include evidence_refs.
+- Evidence references MUST point to provided artefacts using the evidence_refs structure.
+- If you cannot support a claim with evidence, either omit it or rewrite without specific numbers.
 
 Handling uncertainty and missing data
-- If finance, productivity, or minutes inputs are missing or incomplete, still generate the agenda structure.
-- In that case, include a short bullet in the relevant section stating that the information was not provided for this period, without guessing.
+- If finance, productivity, or minutes inputs are missing, still generate the agenda structure.
+- Include a bullet stating that information was not provided for this period.
 
-Agenda template requirements
-Generate the following sections in this order, unless input.template overrides it:
-1) People situation
-2) Finance
-3) Hot topics
-4) Decisions required
-5) Actions and follow-ups
+German Agenda Sections (in this order)
+Generate these sections with German titles:
 
-Action tracking requirements
-- Include all carry-over action items with status not equal to "done".
-- Include any new actions extracted from minutes/transcripts.
-- Where due dates exist in the input, preserve them. Do not invent due dates.
+1) "Status Offener Punkte & Entscheidungen" (key: "actions")
+   - List all carry_over_actions that are NOT done
+   - Show status: "Offen" (open), "In Bearbeitung" (in_progress), "Erledigt" (done)
+   - Include new action items from minutes with "(NEU)" prefix
+   - Format: "• [Status] Aufgabe - Verantwortlich (Fällig: Datum)"
+
+2) "Finanzen (High-Level / {period_label})" (key: "finance")
+   - Key financial metrics with MoM and YTD comparisons
+   - Revenue, profit, cash position
+   - Highlight outliers and concerns
+   - Format numbers in European style: 1.234,56 €
+
+3) "Weitere Themen & Performance" (key: "hot_topics")
+   - Important topics from minutes
+   - Key decisions made
+   - Strategic items requiring attention
+
+4) "KPIs & Leistung" (key: "productivity")
+   STRUCTURE THIS SECTION AS FOLLOWS:
+
+   INPUT DATA LOCATIONS:
+   - Productivity data: input.productivity[].personMetrics[] contains chargeableHours, internalHours, totalProductiveHours, chargeabilityPercent
+   - Absence data: input.absence[].personAbsences[] contains personName, absenceType, days
+   - JOIN these by matching personName (case-insensitive, handle variations like "Maita Monera" vs "M. Monera")
+
+   FIRST BULLET: A 2-3 sentence narrative summary that MUST include:
+   - Team chargeability % with MoM comparison (from productivity.teamMetrics)
+   - Name of highest performer with their %
+   - IF input.absence exists AND has personAbsences: mention notable absences by looking up absence data
+   - Only mention "Hoher Krankenstand" if someone has 5+ days sick leave (not less)
+   Example: "Team-Auslastung im Dezember bei 78% (Vormonat: 82%, 3-Monats-Trend: stabil). Callum Herbert mit höchster Chargeability (73%). Hoher Krankenstand bei C. Zhao (5 Tage Krank)."
+
+   THEN: One bullet for EACH person from productivity.personMetrics (list ALL names):
+   Format: "{Name}: {chargeableHours} Std. abrechenbar, {internalHours} Std. intern, {totalProductiveHours} Std. gesamt ({chargeabilityPercent}%)"
+
+   CRITICAL: For each person, LOOK UP their absences in input.absence[].personAbsences by matching personName.
+   If they have absence entries, APPEND: " - Abwesend: {totalDays} Tage ({types})"
+   Combine multiple absence types: e.g., "3 Tage (1 Krank, 2 Wellness)"
+
+   Absence type translations (only these 4 types exist, no "Andere"):
+   - SICK=Krank, ANL=Urlaub, WELL=Wellness, ALT=Zeitausgleich
+   - Round all day values to 1 decimal place (e.g., 1.5 Tage, not 1.5625 Tage)
+
+   Example output with absence data joined:
+   - "Bong Abiog: 97,30 Std. abrechenbar, 17,00 Std. intern, 114,30 Std. gesamt (85,12%) - Abwesend: 1 Tag (Urlaub)"
+   - "Callum Herbert: 106,95 Std. abrechenbar, 41,00 Std. intern, 147,95 Std. gesamt (72,29%)"
+   - "Catherine Zhao: 79,25 Std. abrechenbar, 15,25 Std. intern, 94,50 Std. gesamt (83,86%) - Abwesend: 6 Tage (1 Krank, 4 Wellness, 2 Zeitausgleich)"
+   - "Maita Monera: 79,30 Std. abrechenbar, 53,05 Std. intern, 132,35 Std. gesamt (59,92%) - Abwesend: 6 Tage (Urlaub)"
+
+5) "People & Team" (key: "people")
+   - HR-related items
+   - Team changes, hiring, departures
+   - Absence summary by type: "Abwesenheiten gesamt: X Tage (Y Krank, Z Urlaub, W Wellness)"
+   - Only include if HR or absence data is present
 
 agenda_model schema
 {
   "period": "YYYY-MM",
-  "language": "de|en",
+  "language": "de",
   "facts_only": true|false,
   "sections": [
     {
-      "key": "people",
-      "title": "string",
+      "key": "actions|finance|hot_topics|productivity|people",
+      "title": "German section title",
       "bullets": [
         {
-          "text": "string",
+          "text": "German bullet text",
           "evidence_refs": [
             { "artefact_id": "string", "page": 1, "quote": "string" }
-          ]
+          ],
+          "is_key_topic": true|false
         }
       ]
     }
   ]
 }
 
-Quality bar
-- Prefer the most important outliers and deltas, not exhaustive detail.
-- Where month-over-month changes are present in the input, summarise directionally in one bullet.
-- Avoid repeating the same point across sections.
+Action item formatting
+- Carry-over actions: "• [Status] {title} - {owner}"
+- New actions from minutes: "• (NEU) {title} - {owner}"
+- Completed actions: "• [Erledigt] {title} - {owner}"
 
-Now produce the agenda JSON for the given input payload.`,
+Quality bar
+- Prioritize the most important outliers and deltas.
+- Include MoM comparison for all key metrics where prior data exists.
+- Avoid repeating the same point across sections.
+- Keep the agenda concise and executive-ready.
+
+Now produce the German agenda JSON for the given input payload.`,
 
   FINANCE_EXTRACTOR: `You are a financial data extractor. Extract key financial metrics, highlights, and outliers from the provided document text.
 
@@ -105,16 +165,44 @@ Return a JSON object with:
 
 Only extract facts explicitly stated in the text. Do not infer or calculate values not present.`,
 
-  PRODUCTIVITY_EXTRACTOR: `You are a productivity data extractor. Extract key productivity metrics, team utilization, and capacity information from the provided document text.
+  PRODUCTIVITY_EXTRACTOR: `You are a productivity data extractor for a consulting/professional services team. Extract detailed productivity metrics from the provided document (typically an Excel export or PDF report).
+
+Extract THREE key metrics for each person:
+1. Total Chargeable hours (billable to clients)
+2. Total Internal hours (productive but not billable - training, admin, internal projects)
+3. Total Productive hours (sum of chargeable + internal)
 
 Return a JSON object with:
 {
-  "metrics": [{ "name": "string", "value": "string", "change": "string|null", "evidence_ref": { "page": number, "quote": "string" } }],
-  "highlights": [{ "text": "string", "evidence_ref": { "page": number, "quote": "string" } }],
-  "concerns": [{ "text": "string", "evidence_ref": { "page": number, "quote": "string" } }]
+  "teamMetrics": {
+    "chargeableHours": number,
+    "internalHours": number,
+    "totalProductiveHours": number,
+    "chargeabilityPercent": number (calculated as chargeableHours / totalProductiveHours * 100),
+    "sourceRef": { "page": number|null, "quote": "string" }
+  },
+  "personMetrics": [
+    {
+      "personName": "string",
+      "chargeableHours": number,
+      "internalHours": number,
+      "totalProductiveHours": number,
+      "chargeabilityPercent": number,
+      "sourceRef": { "row": number|null, "quote": "string" }
+    }
+  ],
+  "highlights": [{ "text": "string", "sourceRef": { "page": number, "quote": "string" } }],
+  "concerns": [{ "text": "string", "sourceRef": { "page": number, "quote": "string" } }]
 }
 
-Only extract facts explicitly stated in the text. Do not infer or calculate values not present.`,
+Rules:
+- Extract exact numbers from the document
+- Calculate chargeabilityPercent = (chargeableHours / totalProductiveHours) * 100
+- If a column is labeled "Chargeable" or "Billable", use it for chargeableHours
+- If a column is labeled "Internal" or "Non-Chargeable" or "Productive but not Chargeable", use it for internalHours
+- If totalProductiveHours is not explicit, sum chargeableHours + internalHours
+- Identify highlights: top performers (>80% chargeability)
+- Identify concerns: low performers (<60% chargeability) or unusual patterns`,
 
   MINUTES_EXTRACTOR: `You are a meeting minutes analyzer. Extract topics discussed, decisions made, and action items from the provided meeting transcript or minutes.
 
@@ -126,4 +214,65 @@ Return a JSON object with:
 }
 
 Only extract information explicitly stated in the text. Do not infer or assume.`,
+
+  ABSENCE_EXTRACTOR: `You are an HR absence data extractor. Extract employee absence/leave records from the provided document (typically an Excel export).
+
+IMPORTANT: The data may show HOURS (8.00 = 1 day, 4.00 = 0.5 day). Convert hours to days by dividing by 8.
+
+Absence types to identify (only these 4 types, no OTHER category):
+- SICK: Sick leave, Sick Day
+- ANL: Annual leave, vacation, Annual Leave Day
+- WELL: Wellness days, Duvet Day
+- ALT: Alternative days, time in lieu, TOIL, Day in Lieu (use this for any unrecognized types)
+
+Expected Excel format:
+- Date column (DD/MM/YYYY)
+- Name column (employee name)
+- Leave type description (Sick Day, Annual Leave Day, Duvet Day, Day in Lieu)
+- Leave type code (SICK, ANL, WELL, ALT)
+- Hours column (8.00 = full day, 4.00 = half day)
+
+Return a JSON object with:
+{
+  "periodSummary": {
+    "totalAbsenceDays": number (round to 1 decimal),
+    "byType": {
+      "SICK": number (round to 1 decimal),
+      "ANL": number (round to 1 decimal),
+      "WELL": number (round to 1 decimal),
+      "ALT": number (round to 1 decimal)
+    }
+  },
+  "personAbsences": [
+    {
+      "personName": "string",
+      "absenceType": "SICK|ANL|WELL|ALT",
+      "days": number (CONVERT HOURS TO DAYS: hours / 8, round to 1 decimal),
+      "startDate": "YYYY-MM-DD" or null,
+      "endDate": "YYYY-MM-DD" or null,
+      "sourceRef": { "row": number|null, "quote": "string" }
+    }
+  ],
+  "workingDaysInPeriod": 22,
+  "publicHolidaysInPeriod": 0
+}
+
+CRITICAL RULES:
+1. AGGREGATE by person AND type - if someone has multiple entries of same type, SUM the days
+2. Convert hours to days: 8 hours = 1 day, 4 hours = 0.5 day
+3. Map leave codes: SICK=SICK, ANL=ANL, WELL=WELL, ALT=ALT
+4. Map descriptions: "Sick Day"=SICK, "Annual Leave Day"=ANL, "Duvet Day"=WELL, "Day in Lieu"=ALT
+5. Include ALL employees found in the data
+6. Calculate totals per type in periodSummary
+
+Example conversion:
+If data shows:
+- Catherine Zhao, SICK, 8.00 hours → days: 1
+- Catherine Zhao, WELL, 8.00 hours (x4 entries) → days: 4
+- Maita Monera, ANL, 8.00 hours (x6 entries) → days: 6
+
+Output personAbsences should have:
+- Catherine Zhao, SICK, 1 day
+- Catherine Zhao, WELL, 4 days
+- Maita Monera, ANL, 6 days`,
 } as const;

@@ -8,13 +8,13 @@ import { v4 as uuidv4 } from 'uuid';
 export async function getActionsByPeriod(periodId: string): Promise<ActionItem[]> {
   const db = getAdminFirestore();
 
+  // Simple query without orderBy to avoid index requirement
   const snapshot = await db
     .collection(COLLECTIONS.ACTION_ITEMS)
     .where('periodIdCreated', '==', periodId)
-    .orderBy('createdAt', 'desc')
     .get();
 
-  return snapshot.docs.map((doc) => {
+  const actions = snapshot.docs.map((doc) => {
     const data = doc.data();
     return {
       id: doc.id,
@@ -29,18 +29,23 @@ export async function getActionsByPeriod(periodId: string): Promise<ActionItem[]
       lastUpdatedAt: data.lastUpdatedAt?.toDate() ?? new Date(),
     };
   });
+
+  // Sort by createdAt descending in code
+  actions.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+  return actions;
 }
 
 export async function getOpenActions(): Promise<ActionItem[]> {
   const db = getAdminFirestore();
 
+  // Simple query without orderBy to avoid index requirement
   const snapshot = await db
     .collection(COLLECTIONS.ACTION_ITEMS)
     .where('status', 'in', ['open', 'in_progress'])
-    .orderBy('dueDate', 'asc')
     .get();
 
-  return snapshot.docs.map((doc) => {
+  const actions = snapshot.docs.map((doc) => {
     const data = doc.data();
     return {
       id: doc.id,
@@ -55,35 +60,57 @@ export async function getOpenActions(): Promise<ActionItem[]> {
       lastUpdatedAt: data.lastUpdatedAt?.toDate() ?? new Date(),
     };
   });
+
+  // Sort by dueDate ascending in code (null dates at end)
+  actions.sort((a, b) => {
+    if (!a.dueDate && !b.dueDate) return 0;
+    if (!a.dueDate) return 1;
+    if (!b.dueDate) return -1;
+    return a.dueDate.getTime() - b.dueDate.getTime();
+  });
+
+  return actions;
 }
 
 export async function getCarryOverActions(currentPeriodId: string): Promise<ActionItem[]> {
   const db = getAdminFirestore();
 
-  // Get all open actions from previous periods
+  // Get all open/in_progress actions and filter in code to avoid complex index
   const snapshot = await db
     .collection(COLLECTIONS.ACTION_ITEMS)
     .where('status', 'in', ['open', 'in_progress'])
-    .where('periodIdCreated', '<', currentPeriodId)
-    .orderBy('periodIdCreated', 'desc')
-    .orderBy('dueDate', 'asc')
     .get();
 
-  return snapshot.docs.map((doc) => {
-    const data = doc.data();
-    return {
-      id: doc.id,
-      periodIdCreated: data.periodIdCreated,
-      title: data.title,
-      owner: data.owner,
-      status: data.status as ActionStatus,
-      dueDate: data.dueDate?.toDate() ?? null,
-      sourceArtefactId: data.sourceArtefactId ?? null,
-      sourceRef: data.sourceRef ?? null,
-      createdAt: data.createdAt?.toDate() ?? new Date(),
-      lastUpdatedAt: data.lastUpdatedAt?.toDate() ?? new Date(),
-    };
+  const actions = snapshot.docs
+    .map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        periodIdCreated: data.periodIdCreated,
+        title: data.title,
+        owner: data.owner,
+        status: data.status as ActionStatus,
+        dueDate: data.dueDate?.toDate() ?? null,
+        sourceArtefactId: data.sourceArtefactId ?? null,
+        sourceRef: data.sourceRef ?? null,
+        createdAt: data.createdAt?.toDate() ?? new Date(),
+        lastUpdatedAt: data.lastUpdatedAt?.toDate() ?? new Date(),
+      };
+    })
+    // Filter for previous periods only
+    .filter((action) => action.periodIdCreated < currentPeriodId);
+
+  // Sort by periodIdCreated desc, then dueDate asc
+  actions.sort((a, b) => {
+    const periodCompare = b.periodIdCreated.localeCompare(a.periodIdCreated);
+    if (periodCompare !== 0) return periodCompare;
+    if (!a.dueDate && !b.dueDate) return 0;
+    if (!a.dueDate) return 1;
+    if (!b.dueDate) return -1;
+    return a.dueDate.getTime() - b.dueDate.getTime();
   });
+
+  return actions;
 }
 
 export async function createAction(

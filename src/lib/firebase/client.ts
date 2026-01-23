@@ -16,4 +16,9 @@ const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const storage = getStorage(app);
+
+// For custom buckets, we need to specify the bucket URL explicitly
+const bucketName = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
+export const storage = bucketName
+  ? getStorage(app, `gs://${bucketName}`)
+  : getStorage(app);

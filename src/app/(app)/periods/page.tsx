@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { auth } from '@/lib/firebase/client';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { getCurrentPeriods, createPeriod, getExistingPeriodIds } from '@/lib/actions/periods';
-import { PeriodWithStats, getCurrentNZPeriod, formatPeriodLabel } from '@/lib/types';
+import { getCurrentPeriods, createPeriod, getExistingPeriodIds, updatePeriodHistorical } from '@/lib/actions/periods';
+import { PeriodWithStats, formatPeriodLabel } from '@/lib/types';
 
 export default function PeriodsPage() {
   const router = useRouter();
@@ -13,7 +13,6 @@ export default function PeriodsPage() {
   const [loading, setLoading] = useState(true);
   const [periods, setPeriods] = useState<PeriodWithStats[]>([]);
   const [showModal, setShowModal] = useState(false);
-  const [creating, setCreating] = useState(false);
   const [existingIds, setExistingIds] = useState<string[]>([]);
 
   useEffect(() => {
@@ -42,35 +41,15 @@ export default function PeriodsPage() {
     }
   };
 
-  const handleCreateCurrentPeriod = async () => {
-    if (!user) return;
+  const handleMoveToHistorical = async (periodId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm(`Move ${periodId} to Historical Data?`)) return;
 
-    const currentPeriodId = getCurrentNZPeriod();
-    if (existingIds.includes(currentPeriodId)) {
-      router.push(`/periods/${currentPeriodId}`);
-      return;
-    }
-
-    setCreating(true);
-    try {
-      const result = await createPeriod(
-        {
-          id: currentPeriodId,
-          label: formatPeriodLabel(currentPeriodId),
-          isHistorical: false,
-        },
-        user.uid
-      );
-
-      if (result.success) {
-        router.push(`/periods/${currentPeriodId}`);
-      } else {
-        alert(result.error || 'Failed to create period');
-      }
-    } catch (error) {
-      console.error('Error creating period:', error);
-    } finally {
-      setCreating(false);
+    const result = await updatePeriodHistorical(periodId, true);
+    if (result.success) {
+      loadPeriods();
+    } else {
+      alert(result.error || 'Failed to move period');
     }
   };
 
@@ -86,9 +65,6 @@ export default function PeriodsPage() {
     return null;
   }
 
-  const currentPeriodId = getCurrentNZPeriod();
-  const hasCurrentPeriod = existingIds.includes(currentPeriodId);
-
   return (
     <div>
       <div className="page-header">
@@ -96,12 +72,12 @@ export default function PeriodsPage() {
           <h1>Periods</h1>
           <p>Manage monthly board meeting preparation and agendas.</p>
         </div>
-        <button className="btn btn-primary" onClick={handleCreateCurrentPeriod} disabled={creating}>
+        <button className="btn btn-primary" onClick={() => setShowModal(true)}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="12" y1="5" x2="12" y2="19" />
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
-          {hasCurrentPeriod ? 'Open Current Month' : 'Create Current Month'}
+          Add Period
         </button>
       </div>
 
@@ -118,63 +94,22 @@ export default function PeriodsPage() {
             <p>Create your first period to start preparing board meeting materials.</p>
             <button
               className="btn btn-primary"
-              onClick={handleCreateCurrentPeriod}
-              disabled={creating}
+              onClick={() => setShowModal(true)}
               style={{ marginTop: '16px' }}
             >
-              Create {formatPeriodLabel(currentPeriodId)}
+              Add Period
             </button>
           </div>
         </div>
       ) : (
         <div className="card-grid">
           {periods.map((period) => (
-            <div
+            <PeriodCard
               key={period.id}
-              className="period-card"
+              period={period}
+              onMove={handleMoveToHistorical}
               onClick={() => router.push(`/periods/${period.id}`)}
-            >
-              <div className="period-card-header">
-                <div className="period-card-title">
-                  <svg className="period-card-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                    <line x1="16" y1="2" x2="16" y2="6" />
-                    <line x1="8" y1="2" x2="8" y2="6" />
-                    <line x1="3" y1="10" x2="21" y2="10" />
-                  </svg>
-                  <div>
-                    <h3>{period.label}</h3>
-                    <div className="period-card-id">{period.id}</div>
-                  </div>
-                </div>
-                {period.id === currentPeriodId && (
-                  <span className="badge badge-current">Current</span>
-                )}
-              </div>
-
-              <div className="period-card-badges">
-                {period.artefactCounts.finance > 0 && (
-                  <span className="badge badge-type">finance: {period.artefactCounts.finance}</span>
-                )}
-                {period.artefactCounts.productivity > 0 && (
-                  <span className="badge badge-type">productivity: {period.artefactCounts.productivity}</span>
-                )}
-                {period.artefactCounts.minutes > 0 && (
-                  <span className="badge badge-type">minutes: {period.artefactCounts.minutes}</span>
-                )}
-              </div>
-
-              <div className="period-card-footer">
-                <span className="period-card-count">
-                  {period.totalArtefacts} document{period.totalArtefacts !== 1 ? 's' : ''}
-                </span>
-                {period.hasFinalAgenda ? (
-                  <span className="badge badge-final">Final Agenda</span>
-                ) : period.hasAgenda ? (
-                  <span className="badge badge-draft">Draft Agenda</span>
-                ) : null}
-              </div>
-            </div>
+            />
           ))}
         </div>
       )}
@@ -183,6 +118,7 @@ export default function PeriodsPage() {
         <CreatePeriodModal
           existingIds={existingIds}
           userId={user.uid}
+          isHistorical={false}
           onClose={() => setShowModal(false)}
           onCreated={(periodId) => {
             setShowModal(false);
@@ -194,14 +130,129 @@ export default function PeriodsPage() {
   );
 }
 
+function PeriodCard({
+  period,
+  onMove,
+  onClick,
+}: {
+  period: PeriodWithStats;
+  onMove: (periodId: string, e: React.MouseEvent) => void;
+  onClick: () => void;
+}) {
+  const [showMenu, setShowMenu] = useState(false);
+
+  return (
+    <div className="period-card" onClick={onClick}>
+      <div className="period-card-header">
+        <div className="period-card-title">
+          <svg className="period-card-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+            <line x1="16" y1="2" x2="16" y2="6" />
+            <line x1="8" y1="2" x2="8" y2="6" />
+            <line x1="3" y1="10" x2="21" y2="10" />
+          </svg>
+          <div>
+            <h3>{period.label}</h3>
+            <div className="period-card-id">{period.id}</div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ position: 'relative' }}>
+            <button
+              className="btn btn-ghost"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowMenu(!showMenu);
+              }}
+              style={{ padding: 4 }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="1" />
+                <circle cx="12" cy="5" r="1" />
+                <circle cx="12" cy="19" r="1" />
+              </svg>
+            </button>
+            {showMenu && (
+              <div
+                className="dropdown-menu"
+                style={{
+                  position: 'absolute',
+                  right: 0,
+                  top: '100%',
+                  background: '#fff',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 8,
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                  zIndex: 10,
+                  minWidth: 160,
+                }}
+              >
+                <button
+                  onClick={(e) => {
+                    setShowMenu(false);
+                    onMove(period.id, e);
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    padding: '10px 12px',
+                    border: 'none',
+                    background: 'none',
+                    cursor: 'pointer',
+                    fontSize: 14,
+                    textAlign: 'left',
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M3 3v18h18" />
+                    <path d="M7 16l4-4 4 4 6-6" />
+                  </svg>
+                  Move to Historical
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="period-card-badges">
+        {period.artefactCounts.finance > 0 && (
+          <span className="badge badge-type">finance: {period.artefactCounts.finance}</span>
+        )}
+        {period.artefactCounts.productivity > 0 && (
+          <span className="badge badge-type">productivity: {period.artefactCounts.productivity}</span>
+        )}
+        {period.artefactCounts.minutes > 0 && (
+          <span className="badge badge-type">minutes: {period.artefactCounts.minutes}</span>
+        )}
+      </div>
+
+      <div className="period-card-footer">
+        <span className="period-card-count">
+          {period.totalArtefacts} document{period.totalArtefacts !== 1 ? 's' : ''}
+        </span>
+        {period.hasFinalAgenda ? (
+          <span className="badge badge-final">Final Agenda</span>
+        ) : period.hasAgenda ? (
+          <span className="badge badge-draft">Draft Agenda</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function CreatePeriodModal({
   existingIds,
   userId,
+  isHistorical,
   onClose,
   onCreated,
 }: {
   existingIds: string[];
   userId: string;
+  isHistorical: boolean;
   onClose: () => void;
   onCreated: (periodId: string) => void;
 }) {
@@ -222,7 +273,7 @@ function CreatePeriodModal({
     setCreating(true);
     try {
       const result = await createPeriod(
-        { id: periodId, label, isHistorical: false },
+        { id: periodId, label, isHistorical },
         userId
       );
 
@@ -250,8 +301,8 @@ function CreatePeriodModal({
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-header-content">
-            <h2>Create Period</h2>
-            <p>Add a new period for board meeting preparation.</p>
+            <h2>Add Period</h2>
+            <p>Create a new {isHistorical ? 'historical ' : ''}period for board meeting preparation.</p>
           </div>
           <button className="modal-close" onClick={onClose}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
