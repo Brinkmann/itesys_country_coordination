@@ -64,9 +64,54 @@ export interface Extraction {
   artefactId: string;
   periodId: string;
   kind: ExtractionKind;
-  payload: Record<string, unknown>;
+  payload: FinanceExtraction | ProductivityExtraction | MinutesExtraction;
   extractorVersion: string;
   createdAt: Date;
+}
+
+// Normalized finance metrics for cross-period comparison
+export interface FinanceMetric {
+  name: string; // e.g., "revenue", "netProfit", "cash"
+  value: number;
+  currency: string; // "NZD"
+  period: 'monthly' | 'ytd' | 'annual';
+  sourceRef: { page?: number; quote?: string };
+}
+
+export interface FinanceExtraction {
+  metrics: FinanceMetric[];
+  highlights: { text: string; sourceRef: { page?: number; quote?: string } }[];
+  outliers: { text: string; sourceRef: { page?: number; quote?: string } }[];
+}
+
+// Normalized productivity metrics
+export interface ProductivityMetric {
+  personName?: string; // null for team totals
+  chargeableHours: number;
+  internalHours: number;
+  totalProductiveHours: number;
+  chargeabilityPercent: number;
+  sourceRef: { page?: number; quote?: string };
+}
+
+export interface ProductivityExtraction {
+  teamMetrics: ProductivityMetric;
+  personMetrics: ProductivityMetric[];
+  highlights: { text: string; sourceRef: { page?: number; quote?: string } }[];
+  concerns: { text: string; sourceRef: { page?: number; quote?: string } }[];
+}
+
+// Minutes extraction with action items
+export interface MinutesExtraction {
+  topics: { title: string; summary: string; sourceRef: { page?: number; quote?: string } }[];
+  decisions: { text: string; sourceRef: { page?: number; quote?: string } }[];
+  actionItems: {
+    title: string;
+    owner: string | null;
+    dueDate: string | null;
+    status: 'open' | 'done';
+    sourceRef: { page?: number; quote?: string };
+  }[];
 }
 
 // Evidence reference for traceability
@@ -204,4 +249,57 @@ export function isPeriodInPast(periodId: string): boolean {
 
 export function isPeriodCurrent(periodId: string): boolean {
   return periodId === getCurrentNZPeriod();
+}
+
+/**
+ * Get the previous N periods for comparison
+ * Given a period like "2025-10", returns ["2025-09", "2025-08", ...]
+ */
+export function getPreviousPeriods(currentPeriod: string, count: number): string[] {
+  const [year, month] = currentPeriod.split('-').map(Number);
+  const periods: string[] = [];
+
+  let y = year;
+  let m = month;
+
+  for (let i = 0; i < count; i++) {
+    m--;
+    if (m < 1) {
+      m = 12;
+      y--;
+    }
+    periods.push(`${y}-${String(m).padStart(2, '0')}`);
+  }
+
+  return periods;
+}
+
+/**
+ * Get financial year periods (April to March for NZ)
+ * Returns all periods from FY start to the given period
+ */
+export function getFYPeriods(currentPeriod: string, fyStartMonth: number = 4): string[] {
+  const [year, month] = currentPeriod.split('-').map(Number);
+  const periods: string[] = [];
+
+  // Determine FY start year
+  const fyStartYear = month >= fyStartMonth ? year : year - 1;
+
+  // Generate all periods from FY start to current
+  let y = fyStartYear;
+  let m = fyStartMonth;
+
+  while (true) {
+    const periodId = `${y}-${String(m).padStart(2, '0')}`;
+    if (periodId > currentPeriod) break;
+    periods.push(periodId);
+
+    m++;
+    if (m > 12) {
+      m = 1;
+      y++;
+    }
+  }
+
+  return periods;
 }

@@ -9,6 +9,7 @@ import { getPeriod } from '@/lib/actions/periods';
 import { getArtefactsByPeriod, createArtefactRecord, deleteArtefact, getUploadUrl } from '@/lib/actions/artefacts';
 import { getActionsByPeriod, getCarryOverActions, createAction, updateAction, deleteAction } from '@/lib/actions/actions';
 import { extractTextFromArtefact } from '@/lib/services/textExtraction';
+import { extractMetricsFromText } from '@/lib/services/metricsExtraction';
 import { generateAgenda, getLatestAgenda } from '@/lib/services/agendaGeneration';
 import { uploadFileToSignedUrl } from '@/lib/services/storageUpload';
 import { Period, Artefact, ActionItem, ArtefactType, AgendaModel, formatPeriodLabel } from '@/lib/types';
@@ -150,15 +151,37 @@ export default function PeriodWorkspacePage() {
         console.log(`[Upload] File uploaded successfully, starting text extraction`);
 
         // Step 4: Extract text from the uploaded file (don't fail if extraction fails)
+        let extractedText: string | undefined;
         try {
           const extractResult = await extractTextFromArtefact(urlResult.artefactId, urlResult.storagePath, file.type);
           if (!extractResult.success) {
             console.error('Text extraction failed:', extractResult.error);
           } else {
             console.log(`[Upload] Text extraction completed successfully`);
+            extractedText = extractResult.text;
           }
         } catch (extractError) {
           console.error('Text extraction error:', extractError);
+        }
+
+        // Step 5: Extract normalized metrics from the text (for cross-period comparison)
+        if (extractedText) {
+          try {
+            console.log(`[Upload] Starting metrics extraction for ${type} document`);
+            const metricsResult = await extractMetricsFromText(
+              urlResult.artefactId,
+              periodId,
+              type,
+              extractedText
+            );
+            if (metricsResult.success) {
+              console.log(`[Upload] Metrics extraction completed`);
+            } else if (metricsResult.error) {
+              console.error('Metrics extraction failed:', metricsResult.error);
+            }
+          } catch (metricsError) {
+            console.error('Metrics extraction error:', metricsError);
+          }
         }
       }
 
