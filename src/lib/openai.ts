@@ -46,6 +46,7 @@ Language rules
 
 Cross-period comparison rules
 - The input includes prior_periods with previous_month, fy_periods (financial year), and trend_periods (last 3 months).
+- If input.prior_agenda_summaries exists, use those finance summaries for context instead of raw prior_periods finance data.
 - When comparing metrics:
   - Calculate Month-over-Month (MoM) changes using previous_month data.
   - Show YTD (Year-to-Date) totals from fy_periods where relevant.
@@ -75,6 +76,7 @@ Generate these sections with German titles:
    - Key financial metrics with MoM and YTD comparisons
    - Revenue, profit, cash position
    - Highlight outliers and concerns
+   - If input.prior_agenda_summaries exists, briefly reference relevant prior finance summaries for context
    - Format numbers in European style: 1.234,56 €
 
 3) "Weitere Themen & Performance" (key: "hot_topics")

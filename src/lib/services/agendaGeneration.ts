@@ -94,6 +94,12 @@ type ProductivityPersonWithAbsence = ProductivityExtraction['personMetrics'][num
   absence?: AbsenceByPerson | null;
 };
 
+interface PriorAgendaSummary {
+  period: string;
+  period_label: string;
+  finance_summary: string[];
+}
+
 /**
  * Extract structured data from finance artefacts
  */
@@ -307,10 +313,6 @@ export async function generateAgenda(
     const allPriorPeriodIds = [...new Set([...priorPeriodIds, ...fyPeriodIds])];
 
     // Fetch prior finance, productivity, and absence extractions
-    const priorFinanceExtractions = await getExtractionsForPeriods(allPriorPeriodIds, 'finance');
-    const priorProductivityExtractions = await getExtractionsForPeriods(allPriorPeriodIds, 'productivity');
-    const priorAbsenceExtractions = await getExtractionsForPeriods(allPriorPeriodIds, 'absence');
-
     // Fetch current period absence extractions
     const currentAbsenceExtractions = await getExtractionsForPeriods([periodId], 'absence');
 
@@ -395,49 +397,38 @@ export async function generateAgenda(
       .filter((person) => !productivityPeople.has(normalizeName(person.personName)))
       .map((person) => person.personName);
 
-    // Build prior period comparison data
+    const trimBullet = (text: string, maxLength = 220) =>
+      text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+
+    const priorAgendaSummaries: PriorAgendaSummary[] = [];
+    for (const pid of priorPeriodIds.slice(0, 2)) {
+      const priorAgenda = await getLatestAgenda(pid);
+      if (!priorAgenda?.contentJson?.sections) continue;
+      const financeSection = priorAgenda.contentJson.sections.find((section) => section.key === 'finance');
+      if (!financeSection) continue;
+      priorAgendaSummaries.push({
+        period: pid,
+        period_label: formatPeriodLabel(pid),
+        finance_summary: financeSection.bullets.map((bullet) => trimBullet(bullet.text)).slice(0, 5),
+      });
+    }
+
+    // Build prior period comparison data (lightweight metadata only)
     const priorPeriodData = {
-      // Previous month data for MoM comparison
       previous_month: priorPeriodIds[0] ? {
         period: priorPeriodIds[0],
         period_label: formatPeriodLabel(priorPeriodIds[0]),
-        finance: priorFinanceExtractions
-          .filter(e => e.periodId === priorPeriodIds[0])
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
-        productivity: priorProductivityExtractions
-          .filter(e => e.periodId === priorPeriodIds[0])
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
-        absence: priorAbsenceExtractions
-          .filter(e => e.periodId === priorPeriodIds[0])
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
+        finance: [],
+        productivity: [],
+        absence: [],
       } : null,
-      // FY to date aggregated metrics
-      fy_periods: fyPeriodIds.map(pid => ({
-        period: pid,
-        period_label: formatPeriodLabel(pid),
-        finance: priorFinanceExtractions
-          .filter(e => e.periodId === pid)
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
-        productivity: priorProductivityExtractions
-          .filter(e => e.periodId === pid)
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
-        absence: priorAbsenceExtractions
-          .filter(e => e.periodId === pid)
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
-      })),
-      // Last 3 months trend data
+      fy_periods: [],
       trend_periods: priorPeriodIds.map(pid => ({
         period: pid,
         period_label: formatPeriodLabel(pid),
-        finance: priorFinanceExtractions
-          .filter(e => e.periodId === pid)
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
-        productivity: priorProductivityExtractions
-          .filter(e => e.periodId === pid)
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
-        absence: priorAbsenceExtractions
-          .filter(e => e.periodId === pid)
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
+        finance: [],
+        productivity: [],
+        absence: [],
       })),
     };
 
@@ -482,6 +473,7 @@ export async function generateAgenda(
       })),
       // Cross-period comparison data
       prior_periods: priorPeriodData,
+      prior_agenda_summaries: priorAgendaSummaries,
     };
 
     const requestAgenda = async (sectionScope: AgendaSection['key'][]) => {
