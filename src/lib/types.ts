@@ -115,7 +115,7 @@ export interface MinutesExtraction {
 }
 
 // Absence types: SICK, ANL (annual leave), WELL (wellness), ALT (alternative/in-lieu)
-export type AbsenceType = 'SICK' | 'ANL' | 'WELL' | 'ALT' | 'OTHER';
+export type AbsenceType = 'SICK' | 'ANL' | 'WELL' | 'ALT';
 
 export interface AbsenceRecord {
   personName: string;

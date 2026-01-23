@@ -93,7 +93,8 @@ Generate these sections with German titles:
    - Team chargeability % with MoM comparison (from productivity.teamMetrics)
    - Name of highest performer with their %
    - IF input.absence exists AND has personAbsences: mention notable absences by looking up absence data
-   Example: "Team-Auslastung im Dezember bei 78% (Vormonat: 82%, 3-Monats-Trend: stabil). Callum Herbert mit höchster Chargeability (73%). Hoher Krankenstand bei C. Zhao (1 Tag Krank), M. Monera (6 Tage Urlaub)."
+   - Only mention "Hoher Krankenstand" if someone has 5+ days sick leave (not less)
+   Example: "Team-Auslastung im Dezember bei 78% (Vormonat: 82%, 3-Monats-Trend: stabil). Callum Herbert mit höchster Chargeability (73%). Hoher Krankenstand bei C. Zhao (5 Tage Krank)."
 
    THEN: One bullet for EACH person from productivity.personMetrics (list ALL names):
    Format: "{Name}: {chargeableHours} Std. abrechenbar, {internalHours} Std. intern, {totalProductiveHours} Std. gesamt ({chargeabilityPercent}%)"
@@ -102,7 +103,9 @@ Generate these sections with German titles:
    If they have absence entries, APPEND: " - Abwesend: {totalDays} Tage ({types})"
    Combine multiple absence types: e.g., "3 Tage (1 Krank, 2 Wellness)"
 
-   Absence type translations: SICK=Krank, ANL=Urlaub, WELL=Wellness, ALT=Zeitausgleich
+   Absence type translations (only these 4 types exist, no "Andere"):
+   - SICK=Krank, ANL=Urlaub, WELL=Wellness, ALT=Zeitausgleich
+   - Round all day values to 1 decimal place (e.g., 1.5 Tage, not 1.5625 Tage)
 
    Example output with absence data joined:
    - "Bong Abiog: 97,30 Std. abrechenbar, 17,00 Std. intern, 114,30 Std. gesamt (85,12%) - Abwesend: 1 Tag (Urlaub)"
@@ -216,12 +219,11 @@ Only extract information explicitly stated in the text. Do not infer or assume.`
 
 IMPORTANT: The data may show HOURS (8.00 = 1 day, 4.00 = 0.5 day). Convert hours to days by dividing by 8.
 
-Absence types to identify:
+Absence types to identify (only these 4 types, no OTHER category):
 - SICK: Sick leave, Sick Day
 - ANL: Annual leave, vacation, Annual Leave Day
 - WELL: Wellness days, Duvet Day
-- ALT: Alternative days, time in lieu, TOIL, Day in Lieu
-- OTHER: Any other absence type
+- ALT: Alternative days, time in lieu, TOIL, Day in Lieu (use this for any unrecognized types)
 
 Expected Excel format:
 - Date column (DD/MM/YYYY)
@@ -233,20 +235,19 @@ Expected Excel format:
 Return a JSON object with:
 {
   "periodSummary": {
-    "totalAbsenceDays": number,
+    "totalAbsenceDays": number (round to 1 decimal),
     "byType": {
-      "SICK": number,
-      "ANL": number,
-      "WELL": number,
-      "ALT": number,
-      "OTHER": number
+      "SICK": number (round to 1 decimal),
+      "ANL": number (round to 1 decimal),
+      "WELL": number (round to 1 decimal),
+      "ALT": number (round to 1 decimal)
     }
   },
   "personAbsences": [
     {
       "personName": "string",
-      "absenceType": "SICK|ANL|WELL|ALT|OTHER",
-      "days": number (CONVERT HOURS TO DAYS: hours / 8),
+      "absenceType": "SICK|ANL|WELL|ALT",
+      "days": number (CONVERT HOURS TO DAYS: hours / 8, round to 1 decimal),
       "startDate": "YYYY-MM-DD" or null,
       "endDate": "YYYY-MM-DD" or null,
       "sourceRef": { "row": number|null, "quote": "string" }

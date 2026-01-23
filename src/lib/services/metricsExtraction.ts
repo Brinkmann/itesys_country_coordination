@@ -341,8 +341,8 @@ function normalizeAbsencePayload(parsed: Record<string, unknown>): AbsenceExtrac
   const personAbsences = Array.isArray(parsed.personAbsences) ? parsed.personAbsences : [];
   const periodSummary = parsed.periodSummary as Record<string, unknown> | undefined;
 
-  // Valid absence types
-  const validTypes: AbsenceType[] = ['SICK', 'ANL', 'WELL', 'ALT', 'OTHER'];
+  // Valid absence types (no OTHER - all absences must map to a known type)
+  const validTypes: AbsenceType[] = ['SICK', 'ANL', 'WELL', 'ALT'];
 
   // Normalize absence type
   const normalizeAbsenceType = (type: unknown): AbsenceType => {
@@ -353,16 +353,17 @@ function normalizeAbsencePayload(parsed: Record<string, unknown>): AbsenceExtrac
     // Map common variations
     if (typeStr.includes('SICK') || typeStr.includes('ILL')) return 'SICK';
     if (typeStr.includes('ANNUAL') || typeStr.includes('VACATION') || typeStr.includes('HOLIDAY')) return 'ANL';
-    if (typeStr.includes('WELL')) return 'WELL';
+    if (typeStr.includes('WELL') || typeStr.includes('DUVET')) return 'WELL';
     if (typeStr.includes('LIEU') || typeStr.includes('TOIL') || typeStr.includes('ALT')) return 'ALT';
-    return 'OTHER';
+    // Default to ALT for any unknown type (no OTHER category)
+    return 'ALT';
   };
 
   // Build person absences array
   const normalizedAbsences = personAbsences.map((a: Record<string, unknown>) => ({
     personName: String(a.personName || a.person_name || ''),
     absenceType: normalizeAbsenceType(a.absenceType || a.absence_type || a.type),
-    days: parseFloat(String(a.days || '0')) || 0,
+    days: Math.round((parseFloat(String(a.days || '0')) || 0) * 10) / 10, // Round to 1 decimal
     startDate: a.startDate || a.start_date ? String(a.startDate || a.start_date) : undefined,
     endDate: a.endDate || a.end_date ? String(a.endDate || a.end_date) : undefined,
     sourceRef: {
@@ -375,33 +376,36 @@ function normalizeAbsencePayload(parsed: Record<string, unknown>): AbsenceExtrac
     },
   }));
 
-  // Calculate summary by type
+  // Calculate summary by type (no OTHER category)
   const byType: Record<AbsenceType, number> = {
     SICK: 0,
     ANL: 0,
     WELL: 0,
     ALT: 0,
-    OTHER: 0,
   };
 
   normalizedAbsences.forEach((a) => {
     byType[a.absenceType] += a.days;
   });
 
-  const totalAbsenceDays = Object.values(byType).reduce((sum, val) => sum + val, 0);
+  // Round all byType values to 1 decimal
+  Object.keys(byType).forEach((key) => {
+    byType[key as AbsenceType] = Math.round(byType[key as AbsenceType] * 10) / 10;
+  });
+
+  const totalAbsenceDays = Math.round(Object.values(byType).reduce((sum, val) => sum + val, 0) * 10) / 10;
 
   return {
     periodSummary: {
       totalAbsenceDays: periodSummary?.totalAbsenceDays
-        ? parseFloat(String(periodSummary.totalAbsenceDays))
+        ? Math.round(parseFloat(String(periodSummary.totalAbsenceDays)) * 10) / 10
         : totalAbsenceDays,
       byType: periodSummary?.byType
         ? {
-            SICK: parseFloat(String((periodSummary.byType as Record<string, unknown>).SICK || '0')) || byType.SICK,
-            ANL: parseFloat(String((periodSummary.byType as Record<string, unknown>).ANL || '0')) || byType.ANL,
-            WELL: parseFloat(String((periodSummary.byType as Record<string, unknown>).WELL || '0')) || byType.WELL,
-            ALT: parseFloat(String((periodSummary.byType as Record<string, unknown>).ALT || '0')) || byType.ALT,
-            OTHER: parseFloat(String((periodSummary.byType as Record<string, unknown>).OTHER || '0')) || byType.OTHER,
+            SICK: Math.round((parseFloat(String((periodSummary.byType as Record<string, unknown>).SICK || '0')) || byType.SICK) * 10) / 10,
+            ANL: Math.round((parseFloat(String((periodSummary.byType as Record<string, unknown>).ANL || '0')) || byType.ANL) * 10) / 10,
+            WELL: Math.round((parseFloat(String((periodSummary.byType as Record<string, unknown>).WELL || '0')) || byType.WELL) * 10) / 10,
+            ALT: Math.round((parseFloat(String((periodSummary.byType as Record<string, unknown>).ALT || '0')) || byType.ALT) * 10) / 10,
           }
         : byType,
     },
