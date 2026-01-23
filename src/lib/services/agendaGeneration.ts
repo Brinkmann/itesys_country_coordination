@@ -9,6 +9,8 @@ import {
   ActionItem,
   AgendaModel,
   AgendaSection,
+  AbsenceExtraction,
+  AbsenceType,
   Extraction,
   EvidenceRef,
   FinanceExtraction as TypedFinanceExtraction,
@@ -70,6 +72,13 @@ interface MinutesExtraction {
     due_date: string | null;
     evidence_ref: { page: number | null; quote: string };
   }>;
+}
+
+interface AbsenceByPerson {
+  personName: string;
+  totalDays: number;
+  byType: Record<AbsenceType, number>;
+  evidence_refs: EvidenceRef[];
 }
 
 /**
@@ -291,6 +300,83 @@ export async function generateAgenda(
     // Fetch current period absence extractions
     const currentAbsenceExtractions = await getExtractionsForPeriods([periodId], 'absence');
 
+    const normalizeName = (name: string) => name.trim().toLowerCase();
+
+    const absenceByPersonMap = new Map<string, AbsenceByPerson>();
+    const absenceTotalsByType: Record<AbsenceType, number> = {
+      SICK: 0,
+      ANL: 0,
+      WELL: 0,
+      ALT: 0,
+    };
+
+    for (const extraction of currentAbsenceExtractions) {
+      const payload = extraction.payload as AbsenceExtraction;
+      if (!payload?.personAbsences) continue;
+
+      for (const record of payload.personAbsences) {
+        const normalizedName = normalizeName(record.personName);
+        if (!normalizedName) continue;
+
+        const existing = absenceByPersonMap.get(normalizedName);
+        const evidenceRef: EvidenceRef = {
+          artefact_id: extraction.artefactId,
+          page: null,
+          quote: record.sourceRef?.quote ?? (record.sourceRef?.row ? `Row ${record.sourceRef.row}` : null),
+        };
+
+        if (!existing) {
+          absenceByPersonMap.set(normalizedName, {
+            personName: record.personName,
+            totalDays: record.days,
+            byType: {
+              SICK: record.absenceType === 'SICK' ? record.days : 0,
+              ANL: record.absenceType === 'ANL' ? record.days : 0,
+              WELL: record.absenceType === 'WELL' ? record.days : 0,
+              ALT: record.absenceType === 'ALT' ? record.days : 0,
+            },
+            evidence_refs: [evidenceRef],
+          });
+        } else {
+          existing.totalDays += record.days;
+          existing.byType[record.absenceType] += record.days;
+          existing.evidence_refs.push(evidenceRef);
+        }
+
+        absenceTotalsByType[record.absenceType] += record.days;
+      }
+    }
+
+    const absenceByPerson = Array.from(absenceByPersonMap.values()).map((entry) => ({
+      ...entry,
+      totalDays: Math.round(entry.totalDays * 10) / 10,
+      byType: {
+        SICK: Math.round(entry.byType.SICK * 10) / 10,
+        ANL: Math.round(entry.byType.ANL * 10) / 10,
+        WELL: Math.round(entry.byType.WELL * 10) / 10,
+        ALT: Math.round(entry.byType.ALT * 10) / 10,
+      },
+    }));
+
+    const absenceSummary = {
+      totalAbsenceDays: Math.round(Object.values(absenceTotalsByType).reduce((sum, val) => sum + val, 0) * 10) / 10,
+      byType: {
+        SICK: Math.round(absenceTotalsByType.SICK * 10) / 10,
+        ANL: Math.round(absenceTotalsByType.ANL * 10) / 10,
+        WELL: Math.round(absenceTotalsByType.WELL * 10) / 10,
+        ALT: Math.round(absenceTotalsByType.ALT * 10) / 10,
+      },
+    };
+
+    const productivityPeople = new Set(
+      productivityExtractions.flatMap((extraction) =>
+        extraction.data.personMetrics.map((person) => normalizeName(person.personName))
+      )
+    );
+    const absenceOnlyPeople = absenceByPerson
+      .filter((person) => !productivityPeople.has(normalizeName(person.personName)))
+      .map((person) => person.personName);
+
     // Build prior period comparison data
     const priorPeriodData = {
       // Previous month data for MoM comparison
@@ -354,8 +440,12 @@ export async function generateAgenda(
       // Current period absence data for utilization calculation
       absence: currentAbsenceExtractions.map((e) => ({
         extraction_id: e.id,
+        artefact_id: e.artefactId,
         ...e.payload,
       })),
+      absence_summary: absenceSummary,
+      absence_by_person: absenceByPerson,
+      absence_only_people: absenceOnlyPeople,
       minutes: minutesExtractions.map((e) => ({
         artefact_id: e.artefactId,
         ...e.data,

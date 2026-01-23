@@ -86,16 +86,18 @@ Generate these sections with German titles:
 
    INPUT DATA LOCATIONS:
    - Productivity data: input.productivity[].personMetrics[] contains chargeableHours, internalHours, totalProductiveHours, chargeabilityPercent
-   - Absence data: input.absence[].personAbsences[] contains personName, absenceType, days
-   - JOIN these by matching personName (case-insensitive, handle variations like "Maita Monera" vs "M. Monera")
+   - Absence data (pre-aggregated): input.absence_by_person[] contains personName, totalDays, byType, evidence_refs
+   - Absence summary totals: input.absence_summary.byType contains totals per type
+   - Absence-only names: input.absence_only_people[]
+   - JOIN productivity people to absence_by_person by matching personName (case-insensitive, handle variations like "Maita Monera" vs "M. Monera")
 
    FIRST BULLET: A 2-3 sentence narrative summary that MUST include:
    - Team chargeability % with MoM comparison (from productivity.teamMetrics)
    - 3-month trend direction if prior_periods.trend_periods has productivity data (use ↑, ↓, →)
    - Name of highest performer with their %
    - Name of lowest performer under target (if any) with their %
-   - IF input.absence exists AND has personAbsences: mention notable absences by looking up absence data
-   - Include a short absence summary by type (SICK/ANL/WELL/ALT) with total days when absence data is present
+   - IF input.absence_by_person exists: mention notable absences by looking up absence_by_person data
+   - Include a short absence summary by type (SICK/ANL/WELL/ALT) with total days when input.absence_summary is present
    - Mention "Hoher Krankenstand" if someone has 3+ days sick leave
    - Provide a short causal link when notable absences are present (e.g., "beeinflusst Gesamtproduktivität")
    Example: "Team-Auslastung im Dezember bei 82% (Vormonat: 78%, 3-Monats-Trend: ↑). Callum Herbert mit höchster Chargeability (73%), Catherine Zhao unter Ziel (54%). Hoher Krankenstand bei M. Monera (3 Tage Krank) beeinflusst Gesamtproduktivität. Abwesenheiten: 6 Tage (3 Krank, 2 Urlaub, 1 Wellness)."
@@ -103,13 +105,15 @@ Generate these sections with German titles:
    THEN: One bullet for EACH person from productivity.personMetrics (list ALL names):
    Format: "{Name}: {chargeableHours} Std. abrechenbar, {internalHours} Std. intern, {totalProductiveHours} Std. gesamt ({chargeabilityPercent}%)"
 
-   CRITICAL: For each person, LOOK UP their absences in input.absence[].personAbsences by matching personName.
+   CRITICAL: For each person, LOOK UP their absences in input.absence_by_person by matching personName.
    If they have absence entries, APPEND: " - Abwesend: {totalDays} Tage ({types})"
    Combine multiple absence types: e.g., "3 Tage (1 Krank, 2 Wellness)"
    If a person has no absence entry, APPEND: " - Abwesend: 0 Tage"
+   Use the evidence_refs from absence_by_person for any absence claims.
 
-   THEN: If there are people present in input.absence[].personAbsences who do NOT appear in productivity.personMetrics,
-   add a sub-list with the label "Abwesenheiten ohne Protime-Datensatz:" and include one bullet per person:
+   THEN: If there are people present in input.absence_only_people who do NOT appear in productivity.personMetrics,
+   add a sub-list with the label "Abwesenheiten ohne Protime-Datensatz:" and include one bullet per person
+   using the matching entry from input.absence_by_person:
    Format: "{Name}: Abwesend {totalDays} Tage ({types})"
 
    Absence type translations (only these 4 types exist, no "Andere"):
