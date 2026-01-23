@@ -1,6 +1,7 @@
 'use server';
 
 import mammoth from 'mammoth';
+import * as XLSX from 'xlsx';
 import { updateArtefactParsedText, setArtefactParseError } from '@/lib/actions/artefacts';
 import { getAdminStorage } from '@/lib/firebase/admin';
 
@@ -62,6 +63,17 @@ export async function extractTextFromArtefact(
         extractedText = docxResult.text || null;
       } else {
         extractionError = docxResult.error || 'DOCX extraction failed';
+      }
+    } else if (
+      mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      mimeType === 'application/vnd.ms-excel' ||
+      mimeType === 'text/csv'
+    ) {
+      const xlsxResult = await extractFromExcel(buffer, mimeType);
+      if (xlsxResult.success) {
+        extractedText = xlsxResult.text || null;
+      } else {
+        extractionError = xlsxResult.error || 'Excel extraction failed';
       }
     } else {
       extractionError = `Unsupported file type: ${mimeType}`;
@@ -147,6 +159,81 @@ async function extractFromDocx(buffer: Buffer): Promise<{ success: boolean; text
   } catch (error) {
     console.error('[TextExtraction] DOCX extraction error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Failed to parse DOCX';
+    return {
+      success: false,
+      error: errorMessage,
+    };
+  }
+}
+
+/**
+ * Extract text from Excel buffer (xlsx, xls, csv) using SheetJS
+ * Converts spreadsheet data to a structured text format for AI processing
+ */
+async function extractFromExcel(buffer: Buffer, mimeType: string): Promise<{ success: boolean; text?: string; error?: string }> {
+  try {
+    console.log(`[TextExtraction] Parsing Excel file, buffer size: ${buffer.length} bytes, type: ${mimeType}`);
+
+    // Read the workbook from buffer
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+
+    const textParts: string[] = [];
+
+    // Process each sheet
+    for (const sheetName of workbook.SheetNames) {
+      const sheet = workbook.Sheets[sheetName];
+
+      // Add sheet name as header
+      textParts.push(`=== Sheet: ${sheetName} ===\n`);
+
+      // Convert sheet to JSON for structured data (as array of arrays)
+      const jsonData = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' });
+
+      if (jsonData.length === 0) {
+        textParts.push('(Empty sheet)\n');
+        continue;
+      }
+
+      // First row is typically headers
+      const firstRow = jsonData[0];
+      const headers: string[] = Array.isArray(firstRow) ? firstRow.map(h => String(h || '')) : [];
+      if (headers.length > 0 && headers.some(h => h)) {
+        textParts.push(`Headers: ${headers.filter(h => h).join(' | ')}\n`);
+        textParts.push('-'.repeat(50) + '\n');
+      }
+
+      // Process data rows
+      for (let i = 1; i < jsonData.length; i++) {
+        const row = jsonData[i];
+        if (Array.isArray(row) && row.some(cell => cell !== '')) {
+          // Create a row representation with column context
+          const rowParts: string[] = [];
+          for (let j = 0; j < row.length; j++) {
+            const cellValue = row[j];
+            if (cellValue !== '' && cellValue !== null && cellValue !== undefined) {
+              const header = headers && headers[j] ? headers[j] : `Col${j + 1}`;
+              rowParts.push(`${header}: ${cellValue}`);
+            }
+          }
+          if (rowParts.length > 0) {
+            textParts.push(`Row ${i}: ${rowParts.join(', ')}\n`);
+          }
+        }
+      }
+
+      textParts.push('\n');
+    }
+
+    const text = textParts.join('');
+    console.log(`[TextExtraction] Excel parsed successfully, text length: ${text.length}`);
+
+    return {
+      success: true,
+      text: text,
+    };
+  } catch (error) {
+    console.error('[TextExtraction] Excel extraction error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Failed to parse Excel file';
     return {
       success: false,
       error: errorMessage,
