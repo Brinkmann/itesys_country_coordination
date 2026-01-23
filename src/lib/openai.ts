@@ -82,33 +82,30 @@ Generate these sections with German titles:
    - Strategic items requiring attention
 
 4) "KPIs & Leistung" (key: "productivity")
-   START with a 2-3 sentence narrative summary evaluating the last 3 months trend.
+   STRUCTURE THIS SECTION AS FOLLOWS:
 
-   Utilization calculation (when absence data is available):
-   - Available Hours = (workingDaysInPeriod × 8) - (totalAbsenceDays × 8)
-   - Utilization % = (totalProductiveHours / Available Hours) × 100
-   - Chargeability % = (chargeableHours / Available Hours) × 100
+   FIRST BULLET: A 2-3 sentence narrative summary that MUST include:
+   - Team chargeability % with MoM comparison
+   - Name of highest performer with their %
+   - IF absence data exists: mention notable absences (e.g., "Hoher Krankenstand bei X (Y Tage)")
+   Example: "Team-Auslastung im Dezember bei 78% (Vormonat: 82%, 3-Monats-Trend: stabil). Callum Herbert mit höchster Chargeability (73%). Hoher Krankenstand bei M. Monera (3 Tage Krank)."
 
-   Include for each person:
-   - Chargeable hours (abrechenbar)
-   - Internal hours (intern)
-   - Total productive hours (gesamt produktiv)
-   - Utilization % if absence data available
+   THEN: One bullet for EACH person in the team (list ALL names, not just highlights):
+   Format: "{Name}: {chargeableHours} Std. abrechenbar, {internalHours} Std. intern, {totalProductiveHours} Std. gesamt ({chargeabilityPercent}%)"
 
-   Highlight:
-   - Top performers (>80% chargeability)
-   - Underperformers (<60% chargeability)
-   - Unusual absence patterns (high sick days)
-   - MoM trend for team chargeability
+   If absence data is available for a person, append: " - Abwesend: {days} Tage ({type})"
+   Absence types in German: SICK=Krank, ANL=Urlaub, WELL=Wellness, ALT=Zeitausgleich
 
-   Example narrative: "Team-Auslastung im Dezember bei 78% (Vormonat: 82%, 3-Monats-Trend: stabil).
-   Callum Herbert mit höchster Chargeability (73%). Hoher Krankenstand bei M. Monera (3 Tage)."
+   Example bullets after narrative:
+   - "Bong Abiog: 97,30 Std. abrechenbar, 17,00 Std. intern, 114,30 Std. gesamt (85,12%)"
+   - "Callum Herbert: 106,95 Std. abrechenbar, 41,00 Std. intern, 147,95 Std. gesamt (72,29%)"
+   - "Maita Monera: 79,30 Std. abrechenbar, 53,05 Std. intern, 132,35 Std. gesamt (59,92%) - Abwesend: 3 Tage (Krank)"
 
 5) "People & Team" (key: "people")
    - HR-related items
    - Team changes, hiring, departures
-   - Absence summary: total days by type (Krankheit, Urlaub, Wellness, etc.)
-   - Only include if data is present
+   - Absence summary by type: "Abwesenheiten gesamt: X Tage (Y Krank, Z Urlaub, W Wellness)"
+   - Only include if HR or absence data is present
 
 agenda_model schema
 {
