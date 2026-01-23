@@ -1,7 +1,6 @@
 'use server';
 
 import mammoth from 'mammoth';
-import { extractText, getDocumentProxy } from 'unpdf';
 import { updateArtefactParsedText, setArtefactParseError } from '@/lib/actions/artefacts';
 import { getAdminStorage } from '@/lib/firebase/admin';
 
@@ -38,33 +37,46 @@ export async function extractTextFromArtefact(
     if (!exists) {
       console.error(`[TextExtraction] File does not exist: ${storagePath}`);
       await setArtefactParseError(artefactId, `File not found in storage: ${storagePath}`);
-      return { success: false, error: `File not found in storage` };
+      return { success: false, error: 'File not found in storage' };
     }
 
     const [buffer] = await file.download();
     console.log(`[TextExtraction] Downloaded file successfully, size: ${buffer.length} bytes`);
 
-    let result: ExtractionResult;
+    let extractedText: string | null = null;
+    let extractionError: string | null = null;
 
     if (mimeType === 'application/pdf') {
-      result = await extractFromPdf(buffer);
+      const pdfResult = await extractFromPdf(buffer);
+      if (pdfResult.success) {
+        extractedText = pdfResult.text || null;
+      } else {
+        extractionError = pdfResult.error || 'PDF extraction failed';
+      }
     } else if (
       mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
       mimeType === 'application/msword'
     ) {
-      result = await extractFromDocx(buffer);
+      const docxResult = await extractFromDocx(buffer);
+      if (docxResult.success) {
+        extractedText = docxResult.text || null;
+      } else {
+        extractionError = docxResult.error || 'DOCX extraction failed';
+      }
     } else {
-      result = { success: false, error: `Unsupported file type: ${mimeType}` };
+      extractionError = `Unsupported file type: ${mimeType}`;
     }
 
     // Update the artefact with parsed text
-    if (result.success && result.text) {
-      await updateArtefactParsedText(artefactId, result.text, result.pages ?? null);
-    } else if (!result.success) {
-      await setArtefactParseError(artefactId, result.error ?? 'Unknown parsing error');
+    if (extractedText) {
+      await updateArtefactParsedText(artefactId, extractedText, null);
+      // Return plain serializable object
+      return { success: true, text: extractedText };
+    } else {
+      const errorMsg = extractionError || 'Unknown parsing error';
+      await setArtefactParseError(artefactId, errorMsg);
+      return { success: false, error: errorMsg };
     }
-
-    return result;
   } catch (error) {
     console.error('[TextExtraction] Error extracting text from artefact:', error);
     let errorMsg = 'Unknown error';
@@ -85,33 +97,35 @@ export async function extractTextFromArtefact(
 /**
  * Extract text from PDF buffer using unpdf (serverless-compatible)
  */
-async function extractFromPdf(buffer: Buffer): Promise<ExtractionResult> {
+async function extractFromPdf(buffer: Buffer): Promise<{ success: boolean; text?: string; error?: string }> {
   try {
     console.log(`[TextExtraction] Parsing PDF with unpdf, buffer size: ${buffer.length} bytes`);
+
+    // Dynamic import to avoid issues with module loading
+    const { extractText } = await import('unpdf');
 
     // Convert Buffer to Uint8Array for unpdf
     const uint8Array = new Uint8Array(buffer);
 
-    // Get document proxy to access page count
-    const pdf = await getDocumentProxy(uint8Array);
-    const numPages = pdf.numPages;
-    console.log(`[TextExtraction] PDF has ${numPages} pages`);
+    // Extract text from all pages - only use extractText, not getDocumentProxy
+    // to avoid serialization issues with complex PDF.js objects
+    const result = await extractText(uint8Array, { mergePages: true });
 
-    // Extract text from all pages
-    const { text } = await extractText(uint8Array, { mergePages: true });
+    // Extract only the text string to ensure it's serializable
+    const text = typeof result.text === 'string' ? result.text : String(result.text || '');
 
-    console.log(`[TextExtraction] PDF parsed successfully, text length: ${text?.length ?? 0}`);
+    console.log(`[TextExtraction] PDF parsed successfully, text length: ${text.length}`);
 
     return {
       success: true,
-      text: text || '',
-      pages: undefined,
+      text: text,
     };
   } catch (error) {
     console.error('[TextExtraction] PDF extraction error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Failed to parse PDF';
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to parse PDF',
+      error: errorMessage,
     };
   }
 }
@@ -119,22 +133,23 @@ async function extractFromPdf(buffer: Buffer): Promise<ExtractionResult> {
 /**
  * Extract text from DOCX buffer using mammoth
  */
-async function extractFromDocx(buffer: Buffer): Promise<ExtractionResult> {
+async function extractFromDocx(buffer: Buffer): Promise<{ success: boolean; text?: string; error?: string }> {
   try {
     console.log(`[TextExtraction] Parsing DOCX, buffer size: ${buffer.length} bytes`);
     const result = await mammoth.extractRawText({ buffer });
-    console.log(`[TextExtraction] DOCX parsed successfully, text length: ${result.value?.length ?? 0}`);
+    const text = result.value || '';
+    console.log(`[TextExtraction] DOCX parsed successfully, text length: ${text.length}`);
 
     return {
       success: true,
-      text: result.value,
-      pages: null as unknown as ParsedPage[] | undefined,
+      text: text,
     };
   } catch (error) {
     console.error('[TextExtraction] DOCX extraction error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Failed to parse DOCX';
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to parse DOCX',
+      error: errorMessage,
     };
   }
 }
