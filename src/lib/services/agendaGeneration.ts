@@ -90,6 +90,10 @@ interface AbsenceByPerson {
   evidence_refs: EvidenceRef[];
 }
 
+type ProductivityPersonWithAbsence = ProductivityExtraction['personMetrics'][number] & {
+  absence?: AbsenceByPerson | null;
+};
+
 /**
  * Extract structured data from finance artefacts
  */
@@ -377,6 +381,10 @@ export async function generateAgenda(
       },
     };
 
+    const absenceByPersonLookup = new Map(
+      absenceByPerson.map((person) => [normalizeName(person.personName), person])
+    );
+
     const productivityPeople = new Set(
       productivityExtractions.flatMap((extraction) =>
         extraction.data.personMetrics.map((person) => normalizeName(person.personName))
@@ -445,6 +453,10 @@ export async function generateAgenda(
       productivity: productivityExtractions.map((e) => ({
         artefact_id: e.artefactId,
         ...e.data,
+        personMetrics: e.data.personMetrics.map((person): ProductivityPersonWithAbsence => ({
+          ...person,
+          absence: absenceByPersonLookup.get(normalizeName(person.personName)) ?? null,
+        })),
       })),
       // Current period absence data for utilization calculation
       absence: currentAbsenceExtractions.map((e) => ({

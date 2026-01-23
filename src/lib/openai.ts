@@ -86,6 +86,7 @@ Generate these sections with German titles:
 
    INPUT DATA LOCATIONS:
    - Productivity data: input.productivity[].personMetrics[] contains chargeableHours, internalHours, totalProductiveHours, chargeabilityPercent
+   - Each productivity person may include an absence field: input.productivity[].personMetrics[].absence with totalDays, byType, evidence_refs
    - Absence data (pre-aggregated): input.absence_by_person[] contains personName, totalDays, byType, evidence_refs
    - Absence summary totals: input.absence_summary.byType contains totals per type
    - Absence-only names: input.absence_only_people[]
@@ -105,11 +106,12 @@ Generate these sections with German titles:
    THEN: One bullet for EACH person from productivity.personMetrics (list ALL names):
    Format: "{Name}: {chargeableHours} Std. abrechenbar, {internalHours} Std. intern, {totalProductiveHours} Std. gesamt ({chargeabilityPercent}%)"
 
-   CRITICAL: For each person, LOOK UP their absences in input.absence_by_person by matching personName.
+   CRITICAL: For each person, use input.productivity[].personMetrics[].absence when present.
+   If absent, LOOK UP their absences in input.absence_by_person by matching personName.
    If they have absence entries, APPEND: " - Abwesend: {totalDays} Tage ({types})"
    Combine multiple absence types: e.g., "3 Tage (1 Krank, 2 Wellness)"
    If a person has no absence entry, APPEND: " - Abwesend: 0 Tage"
-   Use the evidence_refs from absence_by_person for any absence claims.
+   Use the evidence_refs from the absence object for any absence claims.
 
    THEN: If there are people present in input.absence_only_people who do NOT appear in productivity.personMetrics,
    add a sub-list with the label "Abwesenheiten ohne Protime-Datensatz:" and include one bullet per person
