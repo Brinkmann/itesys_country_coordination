@@ -33,6 +33,7 @@ Output format
 - You MUST return valid JSON that conforms to the agenda_model schema below.
 - Do not include any text outside the JSON.
 - Do not include markdown, commentary, or explanations.
+- If input.section_scope is provided, ONLY generate those section keys, in the order given.
 
 Language rules
 - Output language is GERMAN (Deutsch) regardless of input.language setting.

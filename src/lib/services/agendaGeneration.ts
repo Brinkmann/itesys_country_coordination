@@ -258,6 +258,7 @@ export async function generateAgenda(
   factsOnly: boolean = true,
   userId: string
 ): Promise<{ success: boolean; agendaId?: string; error?: string }> {
+  const client = getOpenAIClient();
   try {
     const db = getAdminFirestore();
 
@@ -441,7 +442,7 @@ export async function generateAgenda(
     };
 
     // Build input payload for agenda generation
-    const inputPayload = {
+    const basePayload = {
       period: periodId,
       period_label: formatPeriodLabel(periodId),
       language,
@@ -483,29 +484,41 @@ export async function generateAgenda(
       prior_periods: priorPeriodData,
     };
 
-    // Generate agenda
-    const client = getOpenAIClient();
+    const requestAgenda = async (sectionScope: AgendaSection['key'][]) => {
+      const response = await client.chat.completions.create({
+        model: OPENAI_CONFIG.model,
+        temperature: OPENAI_CONFIG.temperature,
+        max_tokens: OPENAI_CONFIG.maxTokens,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPTS.AGENDA_GENERATOR },
+          {
+            role: 'user',
+            content: JSON.stringify({ ...basePayload, section_scope: sectionScope }),
+          },
+        ],
+        response_format: { type: 'json_object' },
+      });
 
-    const response = await client.chat.completions.create({
-      model: OPENAI_CONFIG.model,
-      temperature: OPENAI_CONFIG.temperature,
-      max_tokens: OPENAI_CONFIG.maxTokens,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPTS.AGENDA_GENERATOR },
-        {
-          role: 'user',
-          content: JSON.stringify(inputPayload),
-        },
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        throw new Error('No response from AI');
+      }
+
+      return JSON.parse(content) as AgendaModel;
+    };
+
+    const productivityAgenda = await requestAgenda(['productivity', 'people']);
+    const coreAgenda = await requestAgenda(['actions', 'finance', 'hot_topics']);
+
+    const agendaModel: AgendaModel = {
+      period: basePayload.period,
+      language: 'de',
+      facts_only: basePayload.facts_only,
+      sections: [
+        ...coreAgenda.sections,
+        ...productivityAgenda.sections,
       ],
-      response_format: { type: 'json_object' },
-    });
-
-    const content = response.choices[0]?.message?.content;
-    if (!content) {
-      return { success: false, error: 'No response from AI' };
-    }
-
-    const agendaModel = JSON.parse(content) as AgendaModel;
+    };
 
     // Convert to markdown
     const markdownContent = agendaModelToMarkdown(agendaModel);
