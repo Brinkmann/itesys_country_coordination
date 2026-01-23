@@ -5,6 +5,41 @@ import { Artefact, ArtefactType, ArtefactVisibility } from '@/lib/types';
 import { Timestamp } from 'firebase-admin/firestore';
 import { v4 as uuidv4 } from 'uuid';
 
+/**
+ * Generate a signed URL for direct upload to storage
+ * This bypasses client-side Firebase auth issues with custom buckets
+ */
+export async function getUploadUrl(
+  periodId: string,
+  type: ArtefactType,
+  filename: string,
+  mimeType: string
+): Promise<{ success: boolean; uploadUrl?: string; storagePath?: string; artefactId?: string; error?: string }> {
+  try {
+    const storage = getAdminStorage();
+    const bucket = storage.bucket();
+    const artefactId = uuidv4();
+    const storagePath = `${STORAGE_PATHS.ARTEFACTS}/${periodId}/${type}/${artefactId}/${filename}`;
+    const file = bucket.file(storagePath);
+
+    // Generate a signed URL for uploading (valid for 15 minutes)
+    const [uploadUrl] = await file.getSignedUrl({
+      version: 'v4',
+      action: 'write',
+      expires: Date.now() + 15 * 60 * 1000, // 15 minutes
+      contentType: mimeType,
+    });
+
+    return { success: true, uploadUrl, storagePath, artefactId };
+  } catch (error) {
+    console.error('Error generating upload URL:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to generate upload URL',
+    };
+  }
+}
+
 export async function getArtefactsByPeriod(periodId: string): Promise<Artefact[]> {
   const db = getAdminFirestore();
 

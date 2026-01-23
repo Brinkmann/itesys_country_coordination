@@ -1,6 +1,3 @@
-import { ref, uploadBytesResumable, getDownloadURL, UploadTaskSnapshot } from 'firebase/storage';
-import { storage } from '@/lib/firebase/client';
-
 export interface UploadProgress {
   bytesTransferred: number;
   totalBytes: number;
@@ -10,75 +7,53 @@ export interface UploadProgress {
 export interface UploadResult {
   success: boolean;
   storagePath?: string;
-  downloadUrl?: string;
   error?: string;
 }
 
 /**
- * Upload a file directly to Firebase Storage from the client
- * This bypasses serverless function size limits
+ * Upload a file directly to a signed URL
+ * This bypasses Firebase client SDK auth issues with custom GCS buckets
  */
-export async function uploadFileToStorage(
+export async function uploadFileToSignedUrl(
   file: File,
-  storagePath: string,
+  uploadUrl: string,
   onProgress?: (progress: UploadProgress) => void
 ): Promise<UploadResult> {
   return new Promise((resolve) => {
-    try {
-      const storageRef = ref(storage, storagePath);
-      const uploadTask = uploadBytesResumable(storageRef, file, {
-        contentType: file.type,
-      });
+    const xhr = new XMLHttpRequest();
 
-      uploadTask.on(
-        'state_changed',
-        (snapshot: UploadTaskSnapshot) => {
-          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-          onProgress?.({
-            bytesTransferred: snapshot.bytesTransferred,
-            totalBytes: snapshot.totalBytes,
-            progress,
-          });
-        },
-        (error) => {
-          console.error('[StorageUpload] Upload error:', error);
-          let errorMessage = 'Upload failed';
-          if (error.code === 'storage/unauthorized') {
-            errorMessage = 'Not authorized to upload. Please sign in.';
-          } else if (error.code === 'storage/canceled') {
-            errorMessage = 'Upload was canceled.';
-          } else if (error.code === 'storage/unknown') {
-            errorMessage = error.message || 'Unknown error occurred during upload.';
-          }
-          resolve({ success: false, error: errorMessage });
-        },
-        async () => {
-          // Upload completed successfully
-          try {
-            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-            console.log('[StorageUpload] Upload complete:', storagePath);
-            resolve({
-              success: true,
-              storagePath,
-              downloadUrl,
-            });
-          } catch (urlError) {
-            // Upload succeeded but couldn't get URL (still successful)
-            console.warn('[StorageUpload] Could not get download URL:', urlError);
-            resolve({
-              success: true,
-              storagePath,
-            });
-          }
-        }
-      );
-    } catch (error) {
-      console.error('[StorageUpload] Failed to start upload:', error);
-      resolve({
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to start upload',
-      });
-    }
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable && onProgress) {
+        onProgress({
+          bytesTransferred: event.loaded,
+          totalBytes: event.total,
+          progress: (event.loaded / event.total) * 100,
+        });
+      }
+    });
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        console.log('[StorageUpload] Upload complete');
+        resolve({ success: true });
+      } else {
+        console.error('[StorageUpload] Upload failed:', xhr.status, xhr.statusText);
+        resolve({ success: false, error: `Upload failed: ${xhr.status} ${xhr.statusText}` });
+      }
+    });
+
+    xhr.addEventListener('error', () => {
+      console.error('[StorageUpload] Upload error');
+      resolve({ success: false, error: 'Network error during upload' });
+    });
+
+    xhr.addEventListener('abort', () => {
+      resolve({ success: false, error: 'Upload was aborted' });
+    });
+
+    xhr.open('PUT', uploadUrl);
+    xhr.setRequestHeader('Content-Type', file.type);
+    xhr.send(file);
   });
 }
 

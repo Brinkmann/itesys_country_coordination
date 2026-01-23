@@ -6,13 +6,12 @@ import Link from 'next/link';
 import { auth } from '@/lib/firebase/client';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { getPeriod } from '@/lib/actions/periods';
-import { getArtefactsByPeriod, createArtefactRecord, deleteArtefact } from '@/lib/actions/artefacts';
+import { getArtefactsByPeriod, createArtefactRecord, deleteArtefact, getUploadUrl } from '@/lib/actions/artefacts';
 import { getActionsByPeriod, getCarryOverActions, createAction, updateAction, deleteAction } from '@/lib/actions/actions';
 import { extractTextFromArtefact } from '@/lib/services/textExtraction';
 import { generateAgenda, getLatestAgenda } from '@/lib/services/agendaGeneration';
-import { uploadFileToStorage, getArtefactStoragePath } from '@/lib/services/storageUpload';
+import { uploadFileToSignedUrl } from '@/lib/services/storageUpload';
 import { Period, Artefact, ActionItem, ArtefactType, AgendaModel, formatPeriodLabel } from '@/lib/types';
-import { v4 as uuidv4 } from 'uuid';
 
 type ArtefactTabKey = 'finance' | 'productivity' | 'minutes' | 'other';
 type TabKey = ArtefactTabKey | 'agenda' | 'actions';
@@ -113,13 +112,17 @@ export default function PeriodWorkspacePage() {
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
-        // Generate a unique ID for the artefact
-        const artefactId = uuidv4();
-        const storagePath = getArtefactStoragePath(periodId, type, artefactId, file.name);
+        console.log(`[Upload] Starting upload for ${file.name} (${Math.round(file.size / 1024)} KB)`);
 
-        // Upload directly to Firebase Storage (bypasses serverless size limits)
-        console.log(`[Upload] Starting direct upload for ${file.name} (${Math.round(file.size / 1024)} KB)`);
-        const uploadResult = await uploadFileToStorage(file, storagePath, (progress) => {
+        // Step 1: Get a signed upload URL from the server
+        const urlResult = await getUploadUrl(periodId, type, file.name, file.type);
+        if (!urlResult.success || !urlResult.uploadUrl || !urlResult.storagePath || !urlResult.artefactId) {
+          alert(urlResult.error || 'Failed to get upload URL');
+          continue;
+        }
+
+        // Step 2: Upload directly to the signed URL (bypasses all size limits)
+        const uploadResult = await uploadFileToSignedUrl(file, urlResult.uploadUrl, (progress) => {
           console.log(`[Upload] Progress: ${Math.round(progress.progress)}%`);
         });
 
@@ -128,12 +131,12 @@ export default function PeriodWorkspacePage() {
           continue;
         }
 
-        // Create artefact record in Firestore
+        // Step 3: Create artefact record in Firestore
         const recordResult = await createArtefactRecord(
           periodId,
           type,
           file.name,
-          storagePath,
+          urlResult.storagePath,
           file.type,
           file.size,
           user.uid
@@ -146,18 +149,16 @@ export default function PeriodWorkspacePage() {
 
         console.log(`[Upload] File uploaded successfully, starting text extraction`);
 
-        // Extract text from the uploaded file (don't fail if extraction fails)
+        // Step 4: Extract text from the uploaded file (don't fail if extraction fails)
         try {
-          const extractResult = await extractTextFromArtefact(artefactId, storagePath, file.type);
+          const extractResult = await extractTextFromArtefact(urlResult.artefactId, urlResult.storagePath, file.type);
           if (!extractResult.success) {
             console.error('Text extraction failed:', extractResult.error);
-            // Don't alert - the file is uploaded, extraction error is shown on the document
           } else {
             console.log(`[Upload] Text extraction completed successfully`);
           }
         } catch (extractError) {
           console.error('Text extraction error:', extractError);
-          // Don't fail the whole upload if extraction fails
         }
       }
 
