@@ -84,22 +84,31 @@ Generate these sections with German titles:
 4) "KPIs & Leistung" (key: "productivity")
    STRUCTURE THIS SECTION AS FOLLOWS:
 
-   FIRST BULLET: A 2-3 sentence narrative summary that MUST include:
-   - Team chargeability % with MoM comparison
-   - Name of highest performer with their %
-   - IF absence data exists: mention notable absences (e.g., "Hoher Krankenstand bei X (Y Tage)")
-   Example: "Team-Auslastung im Dezember bei 78% (Vormonat: 82%, 3-Monats-Trend: stabil). Callum Herbert mit höchster Chargeability (73%). Hoher Krankenstand bei M. Monera (3 Tage Krank)."
+   INPUT DATA LOCATIONS:
+   - Productivity data: input.productivity[].personMetrics[] contains chargeableHours, internalHours, totalProductiveHours, chargeabilityPercent
+   - Absence data: input.absence[].personAbsences[] contains personName, absenceType, days
+   - JOIN these by matching personName (case-insensitive, handle variations like "Maita Monera" vs "M. Monera")
 
-   THEN: One bullet for EACH person in the team (list ALL names, not just highlights):
+   FIRST BULLET: A 2-3 sentence narrative summary that MUST include:
+   - Team chargeability % with MoM comparison (from productivity.teamMetrics)
+   - Name of highest performer with their %
+   - IF input.absence exists AND has personAbsences: mention notable absences by looking up absence data
+   Example: "Team-Auslastung im Dezember bei 78% (Vormonat: 82%, 3-Monats-Trend: stabil). Callum Herbert mit höchster Chargeability (73%). Hoher Krankenstand bei C. Zhao (1 Tag Krank), M. Monera (6 Tage Urlaub)."
+
+   THEN: One bullet for EACH person from productivity.personMetrics (list ALL names):
    Format: "{Name}: {chargeableHours} Std. abrechenbar, {internalHours} Std. intern, {totalProductiveHours} Std. gesamt ({chargeabilityPercent}%)"
 
-   If absence data is available for a person, append: " - Abwesend: {days} Tage ({type})"
-   Absence types in German: SICK=Krank, ANL=Urlaub, WELL=Wellness, ALT=Zeitausgleich
+   CRITICAL: For each person, LOOK UP their absences in input.absence[].personAbsences by matching personName.
+   If they have absence entries, APPEND: " - Abwesend: {totalDays} Tage ({types})"
+   Combine multiple absence types: e.g., "3 Tage (1 Krank, 2 Wellness)"
 
-   Example bullets after narrative:
-   - "Bong Abiog: 97,30 Std. abrechenbar, 17,00 Std. intern, 114,30 Std. gesamt (85,12%)"
+   Absence type translations: SICK=Krank, ANL=Urlaub, WELL=Wellness, ALT=Zeitausgleich
+
+   Example output with absence data joined:
+   - "Bong Abiog: 97,30 Std. abrechenbar, 17,00 Std. intern, 114,30 Std. gesamt (85,12%) - Abwesend: 1 Tag (Urlaub)"
    - "Callum Herbert: 106,95 Std. abrechenbar, 41,00 Std. intern, 147,95 Std. gesamt (72,29%)"
-   - "Maita Monera: 79,30 Std. abrechenbar, 53,05 Std. intern, 132,35 Std. gesamt (59,92%) - Abwesend: 3 Tage (Krank)"
+   - "Catherine Zhao: 79,25 Std. abrechenbar, 15,25 Std. intern, 94,50 Std. gesamt (83,86%) - Abwesend: 6 Tage (1 Krank, 4 Wellness, 2 Zeitausgleich)"
+   - "Maita Monera: 79,30 Std. abrechenbar, 53,05 Std. intern, 132,35 Std. gesamt (59,92%) - Abwesend: 6 Tage (Urlaub)"
 
 5) "People & Team" (key: "people")
    - HR-related items
@@ -205,12 +214,21 @@ Only extract information explicitly stated in the text. Do not infer or assume.`
 
   ABSENCE_EXTRACTOR: `You are an HR absence data extractor. Extract employee absence/leave records from the provided document (typically an Excel export).
 
+IMPORTANT: The data may show HOURS (8.00 = 1 day, 4.00 = 0.5 day). Convert hours to days by dividing by 8.
+
 Absence types to identify:
-- SICK: Sick leave
-- ANL: Annual leave / vacation
-- WELL: Wellness days
-- ALT: Alternative days / time in lieu / TOIL
+- SICK: Sick leave, Sick Day
+- ANL: Annual leave, vacation, Annual Leave Day
+- WELL: Wellness days, Duvet Day
+- ALT: Alternative days, time in lieu, TOIL, Day in Lieu
 - OTHER: Any other absence type
+
+Expected Excel format:
+- Date column (DD/MM/YYYY)
+- Name column (employee name)
+- Leave type description (Sick Day, Annual Leave Day, Duvet Day, Day in Lieu)
+- Leave type code (SICK, ANL, WELL, ALT)
+- Hours column (8.00 = full day, 4.00 = half day)
 
 Return a JSON object with:
 {
@@ -228,22 +246,32 @@ Return a JSON object with:
     {
       "personName": "string",
       "absenceType": "SICK|ANL|WELL|ALT|OTHER",
-      "days": number (can be decimal for half days, e.g., 0.5),
+      "days": number (CONVERT HOURS TO DAYS: hours / 8),
       "startDate": "YYYY-MM-DD" or null,
       "endDate": "YYYY-MM-DD" or null,
       "sourceRef": { "row": number|null, "quote": "string" }
     }
   ],
-  "workingDaysInPeriod": number (standard NZ working days, typically 20-23),
-  "publicHolidaysInPeriod": number (if identifiable from context)
+  "workingDaysInPeriod": 22,
+  "publicHolidaysInPeriod": 0
 }
 
-Rules:
-- Extract exact absence days from the document
-- Map absence codes/types to standard types (SICK, ANL, WELL, ALT, OTHER)
-- Sum total days per person and by type
-- If dates are provided, include them
-- Support fractional days (0.5 for half day)
-- If working days or public holidays are mentioned, extract them
-- Otherwise, estimate workingDaysInPeriod based on the month (typically 20-23 for NZ)`,
+CRITICAL RULES:
+1. AGGREGATE by person AND type - if someone has multiple entries of same type, SUM the days
+2. Convert hours to days: 8 hours = 1 day, 4 hours = 0.5 day
+3. Map leave codes: SICK=SICK, ANL=ANL, WELL=WELL, ALT=ALT
+4. Map descriptions: "Sick Day"=SICK, "Annual Leave Day"=ANL, "Duvet Day"=WELL, "Day in Lieu"=ALT
+5. Include ALL employees found in the data
+6. Calculate totals per type in periodSummary
+
+Example conversion:
+If data shows:
+- Catherine Zhao, SICK, 8.00 hours → days: 1
+- Catherine Zhao, WELL, 8.00 hours (x4 entries) → days: 4
+- Maita Monera, ANL, 8.00 hours (x6 entries) → days: 6
+
+Output personAbsences should have:
+- Catherine Zhao, SICK, 1 day
+- Catherine Zhao, WELL, 4 days
+- Maita Monera, ANL, 6 days`,
 } as const;
