@@ -3,7 +3,7 @@
 
 export type UserRole = 'owner' | 'reader';
 
-export type ArtefactType = 'finance' | 'productivity' | 'minutes' | 'hr' | 'other' | 'notes';
+export type ArtefactType = 'finance' | 'productivity' | 'minutes' | 'absence' | 'hr' | 'other' | 'notes';
 
 export type ArtefactVisibility = 'normal' | 'restricted';
 
@@ -13,7 +13,7 @@ export type AgendaLanguage = 'de' | 'en';
 
 export type ActionStatus = 'open' | 'in_progress' | 'done';
 
-export type ExtractionKind = 'finance' | 'productivity' | 'minutes';
+export type ExtractionKind = 'finance' | 'productivity' | 'minutes' | 'absence';
 
 // User profile stored in Firestore
 export interface Profile {
@@ -64,7 +64,7 @@ export interface Extraction {
   artefactId: string;
   periodId: string;
   kind: ExtractionKind;
-  payload: FinanceExtraction | ProductivityExtraction | MinutesExtraction;
+  payload: FinanceExtraction | ProductivityExtraction | MinutesExtraction | AbsenceExtraction;
   extractorVersion: string;
   createdAt: Date;
 }
@@ -114,6 +114,28 @@ export interface MinutesExtraction {
   }[];
 }
 
+// Absence types: SICK, ANL (annual leave), WELL (wellness), ALT (alternative/in-lieu)
+export type AbsenceType = 'SICK' | 'ANL' | 'WELL' | 'ALT' | 'OTHER';
+
+export interface AbsenceRecord {
+  personName: string;
+  absenceType: AbsenceType;
+  days: number; // Can be fractional (e.g., 0.5 for half day)
+  startDate?: string; // ISO date if available
+  endDate?: string;
+  sourceRef: { row?: number; quote?: string };
+}
+
+export interface AbsenceExtraction {
+  periodSummary: {
+    totalAbsenceDays: number;
+    byType: Record<AbsenceType, number>;
+  };
+  personAbsences: AbsenceRecord[];
+  workingDaysInPeriod: number; // NZ working days for the month
+  publicHolidaysInPeriod: number; // Public holidays in the period
+}
+
 // Evidence reference for traceability
 export interface EvidenceRef {
   artefact_id: string;
@@ -130,7 +152,7 @@ export interface AgendaBullet {
 
 // Agenda section
 export interface AgendaSection {
-  key: 'people' | 'finance' | 'hot_topics' | 'decisions' | 'actions';
+  key: 'people' | 'finance' | 'hot_topics' | 'decisions' | 'actions' | 'productivity';
   title: string;
   bullets: AgendaBullet[];
 }

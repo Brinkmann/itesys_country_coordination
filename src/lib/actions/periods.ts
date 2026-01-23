@@ -29,6 +29,7 @@ export async function getPeriods(includeHistorical = true): Promise<PeriodWithSt
     const artefactCounts: Record<ArtefactType, number> = {
       finance: 0,
       productivity: 0,
+      absence: 0,
       minutes: 0,
       hr: 0,
       other: 0,
@@ -101,6 +102,7 @@ export async function getHistoricalPeriods(): Promise<PeriodWithStats[]> {
     const artefactCounts: Record<ArtefactType, number> = {
       finance: 0,
       productivity: 0,
+      absence: 0,
       minutes: 0,
       hr: 0,
       other: 0,
@@ -161,6 +163,7 @@ export async function getCurrentPeriods(): Promise<PeriodWithStats[]> {
     const artefactCounts: Record<ArtefactType, number> = {
       finance: 0,
       productivity: 0,
+      absence: 0,
       minutes: 0,
       hr: 0,
       other: 0,

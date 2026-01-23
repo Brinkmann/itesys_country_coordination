@@ -283,9 +283,13 @@ export async function generateAgenda(
     // Combine unique period IDs for querying
     const allPriorPeriodIds = [...new Set([...priorPeriodIds, ...fyPeriodIds])];
 
-    // Fetch prior finance and productivity extractions
+    // Fetch prior finance, productivity, and absence extractions
     const priorFinanceExtractions = await getExtractionsForPeriods(allPriorPeriodIds, 'finance');
     const priorProductivityExtractions = await getExtractionsForPeriods(allPriorPeriodIds, 'productivity');
+    const priorAbsenceExtractions = await getExtractionsForPeriods(allPriorPeriodIds, 'absence');
+
+    // Fetch current period absence extractions
+    const currentAbsenceExtractions = await getExtractionsForPeriods([periodId], 'absence');
 
     // Build prior period comparison data
     const priorPeriodData = {
@@ -299,6 +303,9 @@ export async function generateAgenda(
         productivity: priorProductivityExtractions
           .filter(e => e.periodId === priorPeriodIds[0])
           .map(e => ({ extraction_id: e.id, ...e.payload })),
+        absence: priorAbsenceExtractions
+          .filter(e => e.periodId === priorPeriodIds[0])
+          .map(e => ({ extraction_id: e.id, ...e.payload })),
       } : null,
       // FY to date aggregated metrics
       fy_periods: fyPeriodIds.map(pid => ({
@@ -310,6 +317,9 @@ export async function generateAgenda(
         productivity: priorProductivityExtractions
           .filter(e => e.periodId === pid)
           .map(e => ({ extraction_id: e.id, ...e.payload })),
+        absence: priorAbsenceExtractions
+          .filter(e => e.periodId === pid)
+          .map(e => ({ extraction_id: e.id, ...e.payload })),
       })),
       // Last 3 months trend data
       trend_periods: priorPeriodIds.map(pid => ({
@@ -319,6 +329,9 @@ export async function generateAgenda(
           .filter(e => e.periodId === pid)
           .map(e => ({ extraction_id: e.id, ...e.payload })),
         productivity: priorProductivityExtractions
+          .filter(e => e.periodId === pid)
+          .map(e => ({ extraction_id: e.id, ...e.payload })),
+        absence: priorAbsenceExtractions
           .filter(e => e.periodId === pid)
           .map(e => ({ extraction_id: e.id, ...e.payload })),
       })),
@@ -337,6 +350,11 @@ export async function generateAgenda(
       productivity: productivityExtractions.map((e) => ({
         artefact_id: e.artefactId,
         ...e.data,
+      })),
+      // Current period absence data for utilization calculation
+      absence: currentAbsenceExtractions.map((e) => ({
+        extraction_id: e.id,
+        ...e.payload,
       })),
       minutes: minutesExtractions.map((e) => ({
         artefact_id: e.artefactId,

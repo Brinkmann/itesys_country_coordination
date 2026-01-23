@@ -14,13 +14,14 @@ import { generateAgenda, getLatestAgenda } from '@/lib/services/agendaGeneration
 import { uploadFileToSignedUrl } from '@/lib/services/storageUpload';
 import { Period, Artefact, ActionItem, ArtefactType, AgendaModel, formatPeriodLabel } from '@/lib/types';
 
-type ArtefactTabKey = 'finance' | 'productivity' | 'minutes' | 'other';
+type ArtefactTabKey = 'finance' | 'productivity' | 'absence' | 'minutes' | 'other';
 type TabKey = ArtefactTabKey | 'agenda' | 'actions';
 
 // Updated labels to match user's terminology
-const ARTEFACT_TABS: { key: ArtefactTabKey; label: string; title: string; description: string }[] = [
+const ARTEFACT_TABS: { key: ArtefactTabKey; label: string; title: string; description: string; accept?: string }[] = [
   { key: 'finance', label: 'Management Report', title: 'Management Report', description: 'Upload financial reports and management summaries. The AI will extract key metrics and trends.' },
   { key: 'productivity', label: 'Protime', title: 'Protime Reports', description: 'Upload Protime reports with employee profitability and utilization data.' },
+  { key: 'absence', label: 'Absences', title: 'Absence Records', description: 'Upload absence/leave data (Excel). Types: SICK, ANL (annual leave), WELL (wellness), ALT (in-lieu).', accept: '.xlsx,.xls,.csv' },
   { key: 'minutes', label: 'Meeting Minutes', title: 'Meeting Minutes', description: 'Upload previous meeting minutes or transcripts. The AI will extract decisions and action items.' },
   { key: 'other', label: 'Other', title: 'Other Documents', description: 'Upload any additional documents relevant to the board meeting.' },
 ];
@@ -426,6 +427,7 @@ export default function PeriodWorkspacePage() {
                 onUpload={(files) => handleFileUpload(files, tab.key)}
                 onDelete={handleDeleteArtefact}
                 uploading={uploading}
+                accept={tab.accept}
               />
             ) : null
           )}
@@ -507,6 +509,7 @@ function ArtefactSection({
   onUpload,
   onDelete,
   uploading,
+  accept,
 }: {
   title: string;
   description: string;
@@ -515,6 +518,7 @@ function ArtefactSection({
   onUpload: (files: FileList) => void;
   onDelete: (id: string) => void;
   uploading: boolean;
+  accept?: string;
 }) {
   const [dragover, setDragover] = useState(false);
 
@@ -600,7 +604,7 @@ function ArtefactSection({
         <input
           id={`file-input-${type}`}
           type="file"
-          accept=".pdf,.docx,.doc"
+          accept={accept || '.pdf,.docx,.doc'}
           multiple
           onChange={handleFileSelect}
           style={{ display: 'none' }}

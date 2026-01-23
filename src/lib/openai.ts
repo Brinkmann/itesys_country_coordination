@@ -82,14 +82,32 @@ Generate these sections with German titles:
    - Strategic items requiring attention
 
 4) "KPIs & Leistung" (key: "productivity")
-   - Team chargeability/productivity metrics
-   - Individual performance highlights if notable
-   - MoM comparisons
-   - Concerns from productivity data
+   START with a 2-3 sentence narrative summary evaluating the last 3 months trend.
+
+   Utilization calculation (when absence data is available):
+   - Available Hours = (workingDaysInPeriod × 8) - (totalAbsenceDays × 8)
+   - Utilization % = (totalProductiveHours / Available Hours) × 100
+   - Chargeability % = (chargeableHours / Available Hours) × 100
+
+   Include for each person:
+   - Chargeable hours (abrechenbar)
+   - Internal hours (intern)
+   - Total productive hours (gesamt produktiv)
+   - Utilization % if absence data available
+
+   Highlight:
+   - Top performers (>80% chargeability)
+   - Underperformers (<60% chargeability)
+   - Unusual absence patterns (high sick days)
+   - MoM trend for team chargeability
+
+   Example narrative: "Team-Auslastung im Dezember bei 78% (Vormonat: 82%, 3-Monats-Trend: stabil).
+   Callum Herbert mit höchster Chargeability (73%). Hoher Krankenstand bei M. Monera (3 Tage)."
 
 5) "People & Team" (key: "people")
    - HR-related items
    - Team changes, hiring, departures
+   - Absence summary: total days by type (Krankheit, Urlaub, Wellness, etc.)
    - Only include if data is present
 
 agenda_model schema
@@ -138,16 +156,44 @@ Return a JSON object with:
 
 Only extract facts explicitly stated in the text. Do not infer or calculate values not present.`,
 
-  PRODUCTIVITY_EXTRACTOR: `You are a productivity data extractor. Extract key productivity metrics, team utilization, and capacity information from the provided document text.
+  PRODUCTIVITY_EXTRACTOR: `You are a productivity data extractor for a consulting/professional services team. Extract detailed productivity metrics from the provided document (typically an Excel export or PDF report).
+
+Extract THREE key metrics for each person:
+1. Total Chargeable hours (billable to clients)
+2. Total Internal hours (productive but not billable - training, admin, internal projects)
+3. Total Productive hours (sum of chargeable + internal)
 
 Return a JSON object with:
 {
-  "metrics": [{ "name": "string", "value": "string", "change": "string|null", "evidence_ref": { "page": number, "quote": "string" } }],
-  "highlights": [{ "text": "string", "evidence_ref": { "page": number, "quote": "string" } }],
-  "concerns": [{ "text": "string", "evidence_ref": { "page": number, "quote": "string" } }]
+  "teamMetrics": {
+    "chargeableHours": number,
+    "internalHours": number,
+    "totalProductiveHours": number,
+    "chargeabilityPercent": number (calculated as chargeableHours / totalProductiveHours * 100),
+    "sourceRef": { "page": number|null, "quote": "string" }
+  },
+  "personMetrics": [
+    {
+      "personName": "string",
+      "chargeableHours": number,
+      "internalHours": number,
+      "totalProductiveHours": number,
+      "chargeabilityPercent": number,
+      "sourceRef": { "row": number|null, "quote": "string" }
+    }
+  ],
+  "highlights": [{ "text": "string", "sourceRef": { "page": number, "quote": "string" } }],
+  "concerns": [{ "text": "string", "sourceRef": { "page": number, "quote": "string" } }]
 }
 
-Only extract facts explicitly stated in the text. Do not infer or calculate values not present.`,
+Rules:
+- Extract exact numbers from the document
+- Calculate chargeabilityPercent = (chargeableHours / totalProductiveHours) * 100
+- If a column is labeled "Chargeable" or "Billable", use it for chargeableHours
+- If a column is labeled "Internal" or "Non-Chargeable" or "Productive but not Chargeable", use it for internalHours
+- If totalProductiveHours is not explicit, sum chargeableHours + internalHours
+- Identify highlights: top performers (>80% chargeability)
+- Identify concerns: low performers (<60% chargeability) or unusual patterns`,
 
   MINUTES_EXTRACTOR: `You are a meeting minutes analyzer. Extract topics discussed, decisions made, and action items from the provided meeting transcript or minutes.
 
@@ -159,4 +205,48 @@ Return a JSON object with:
 }
 
 Only extract information explicitly stated in the text. Do not infer or assume.`,
+
+  ABSENCE_EXTRACTOR: `You are an HR absence data extractor. Extract employee absence/leave records from the provided document (typically an Excel export).
+
+Absence types to identify:
+- SICK: Sick leave
+- ANL: Annual leave / vacation
+- WELL: Wellness days
+- ALT: Alternative days / time in lieu / TOIL
+- OTHER: Any other absence type
+
+Return a JSON object with:
+{
+  "periodSummary": {
+    "totalAbsenceDays": number,
+    "byType": {
+      "SICK": number,
+      "ANL": number,
+      "WELL": number,
+      "ALT": number,
+      "OTHER": number
+    }
+  },
+  "personAbsences": [
+    {
+      "personName": "string",
+      "absenceType": "SICK|ANL|WELL|ALT|OTHER",
+      "days": number (can be decimal for half days, e.g., 0.5),
+      "startDate": "YYYY-MM-DD" or null,
+      "endDate": "YYYY-MM-DD" or null,
+      "sourceRef": { "row": number|null, "quote": "string" }
+    }
+  ],
+  "workingDaysInPeriod": number (standard NZ working days, typically 20-23),
+  "publicHolidaysInPeriod": number (if identifiable from context)
+}
+
+Rules:
+- Extract exact absence days from the document
+- Map absence codes/types to standard types (SICK, ANL, WELL, ALT, OTHER)
+- Sum total days per person and by type
+- If dates are provided, include them
+- Support fractional days (0.5 for half day)
+- If working days or public holidays are mentioned, extract them
+- Otherwise, estimate workingDaysInPeriod based on the month (typically 20-23 for NZ)`,
 } as const;

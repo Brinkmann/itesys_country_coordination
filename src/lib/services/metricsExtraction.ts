@@ -8,6 +8,8 @@ import {
   FinanceExtraction,
   ProductivityExtraction,
   MinutesExtraction,
+  AbsenceExtraction,
+  AbsenceType,
 } from '@/lib/types';
 
 /**
@@ -21,6 +23,8 @@ function getExtractionKind(artefactType: ArtefactType): ExtractionKind | null {
       return 'productivity';
     case 'minutes':
       return 'minutes';
+    case 'absence':
+      return 'absence';
     default:
       return null;
   }
@@ -57,6 +61,9 @@ export async function extractMetricsFromText(
       case 'minutes':
         systemPrompt = SYSTEM_PROMPTS.MINUTES_EXTRACTOR;
         break;
+      case 'absence':
+        systemPrompt = SYSTEM_PROMPTS.ABSENCE_EXTRACTOR;
+        break;
     }
 
     // Truncate text if too long (keep first ~15000 chars for context window)
@@ -84,7 +91,7 @@ export async function extractMetricsFromText(
     }
 
     // Parse the JSON response
-    let payload: FinanceExtraction | ProductivityExtraction | MinutesExtraction;
+    let payload: FinanceExtraction | ProductivityExtraction | MinutesExtraction | AbsenceExtraction;
     try {
       const parsed = JSON.parse(content);
       payload = normalizePayload(kind, parsed);
@@ -116,7 +123,7 @@ export async function extractMetricsFromText(
 function normalizePayload(
   kind: ExtractionKind,
   parsed: Record<string, unknown>
-): FinanceExtraction | ProductivityExtraction | MinutesExtraction {
+): FinanceExtraction | ProductivityExtraction | MinutesExtraction | AbsenceExtraction {
   switch (kind) {
     case 'finance':
       return normalizeFinancePayload(parsed);
@@ -124,6 +131,8 @@ function normalizePayload(
       return normalizeProductivityPayload(parsed);
     case 'minutes':
       return normalizeMinutesPayload(parsed);
+    case 'absence':
+      return normalizeAbsencePayload(parsed);
   }
 }
 
@@ -173,41 +182,77 @@ function normalizeFinancePayload(parsed: Record<string, unknown>): FinanceExtrac
 }
 
 function normalizeProductivityPayload(parsed: Record<string, unknown>): ProductivityExtraction {
-  const metrics = Array.isArray(parsed.metrics) ? parsed.metrics : [];
+  // New format: teamMetrics + personMetrics directly from AI
+  const rawPersonMetrics = Array.isArray(parsed.personMetrics) ? parsed.personMetrics : [];
+  const rawTeamMetrics = parsed.teamMetrics as Record<string, unknown> | undefined;
   const highlights = Array.isArray(parsed.highlights) ? parsed.highlights : [];
   const concerns = Array.isArray(parsed.concerns) ? parsed.concerns : [];
 
-  // Find team totals (no person name) vs individual metrics
-  const personMetrics = metrics
-    .filter((m: Record<string, unknown>) => m.name && String(m.name).toLowerCase() !== 'team')
-    .map((m: Record<string, unknown>) => ({
-      personName: String(m.name || ''),
-      chargeableHours: parseFloat(String(m.chargeable_hours || m.value || '0')) || 0,
-      internalHours: parseFloat(String(m.internal_hours || '0')) || 0,
-      totalProductiveHours: parseFloat(String(m.total_hours || '0')) || 0,
-      chargeabilityPercent: parseFloat(String(m.chargeability || '0')) || 0,
+  // Normalize person metrics
+  const personMetrics = rawPersonMetrics.map((m: Record<string, unknown>) => {
+    const chargeable = parseFloat(String(m.chargeableHours || m.chargeable_hours || '0')) || 0;
+    const internal = parseFloat(String(m.internalHours || m.internal_hours || '0')) || 0;
+    const total = parseFloat(String(m.totalProductiveHours || m.total_productive_hours || '0')) || (chargeable + internal);
+    const chargeability = parseFloat(String(m.chargeabilityPercent || m.chargeability_percent || '0')) ||
+      (total > 0 ? (chargeable / total) * 100 : 0);
+
+    return {
+      personName: String(m.personName || m.person_name || ''),
+      chargeableHours: chargeable,
+      internalHours: internal,
+      totalProductiveHours: total,
+      chargeabilityPercent: Math.round(chargeability * 100) / 100, // Round to 2 decimals
       sourceRef: {
-        page: typeof m.evidence_ref === 'object' && m.evidence_ref
-          ? (m.evidence_ref as Record<string, unknown>).page as number | undefined
+        page: typeof m.sourceRef === 'object' && m.sourceRef
+          ? (m.sourceRef as Record<string, unknown>).page as number | undefined
+          : typeof m.source_ref === 'object' && m.source_ref
+          ? (m.source_ref as Record<string, unknown>).page as number | undefined
           : undefined,
-        quote: typeof m.evidence_ref === 'object' && m.evidence_ref
-          ? (m.evidence_ref as Record<string, unknown>).quote as string | undefined
+        quote: typeof m.sourceRef === 'object' && m.sourceRef
+          ? (m.sourceRef as Record<string, unknown>).quote as string | undefined
+          : typeof m.source_ref === 'object' && m.source_ref
+          ? (m.source_ref as Record<string, unknown>).quote as string | undefined
           : undefined,
       },
-    }));
+    };
+  });
 
-  // Calculate team totals from person metrics if not explicitly provided
-  const teamMetrics = {
-    chargeableHours: personMetrics.reduce((sum, p) => sum + p.chargeableHours, 0),
-    internalHours: personMetrics.reduce((sum, p) => sum + p.internalHours, 0),
-    totalProductiveHours: personMetrics.reduce((sum, p) => sum + p.totalProductiveHours, 0),
-    chargeabilityPercent: 0,
-    sourceRef: {},
-  };
+  // Calculate or use team totals
+  let teamMetrics;
+  if (rawTeamMetrics) {
+    const chargeable = parseFloat(String(rawTeamMetrics.chargeableHours || rawTeamMetrics.chargeable_hours || '0')) || 0;
+    const internal = parseFloat(String(rawTeamMetrics.internalHours || rawTeamMetrics.internal_hours || '0')) || 0;
+    const total = parseFloat(String(rawTeamMetrics.totalProductiveHours || rawTeamMetrics.total_productive_hours || '0')) || (chargeable + internal);
+    const chargeability = parseFloat(String(rawTeamMetrics.chargeabilityPercent || rawTeamMetrics.chargeability_percent || '0')) ||
+      (total > 0 ? (chargeable / total) * 100 : 0);
 
-  if (teamMetrics.totalProductiveHours > 0) {
-    teamMetrics.chargeabilityPercent =
-      (teamMetrics.chargeableHours / teamMetrics.totalProductiveHours) * 100;
+    teamMetrics = {
+      chargeableHours: chargeable,
+      internalHours: internal,
+      totalProductiveHours: total,
+      chargeabilityPercent: Math.round(chargeability * 100) / 100,
+      sourceRef: {
+        page: typeof rawTeamMetrics.sourceRef === 'object' && rawTeamMetrics.sourceRef
+          ? (rawTeamMetrics.sourceRef as Record<string, unknown>).page as number | undefined
+          : undefined,
+        quote: typeof rawTeamMetrics.sourceRef === 'object' && rawTeamMetrics.sourceRef
+          ? (rawTeamMetrics.sourceRef as Record<string, unknown>).quote as string | undefined
+          : undefined,
+      },
+    };
+  } else {
+    // Calculate team totals from person metrics
+    const chargeable = personMetrics.reduce((sum, p) => sum + p.chargeableHours, 0);
+    const internal = personMetrics.reduce((sum, p) => sum + p.internalHours, 0);
+    const total = personMetrics.reduce((sum, p) => sum + p.totalProductiveHours, 0);
+
+    teamMetrics = {
+      chargeableHours: chargeable,
+      internalHours: internal,
+      totalProductiveHours: total,
+      chargeabilityPercent: total > 0 ? Math.round((chargeable / total) * 10000) / 100 : 0,
+      sourceRef: {},
+    };
   }
 
   return {
@@ -216,10 +261,14 @@ function normalizeProductivityPayload(parsed: Record<string, unknown>): Producti
     highlights: highlights.map((h: Record<string, unknown>) => ({
       text: String(h.text || ''),
       sourceRef: {
-        page: typeof h.evidence_ref === 'object' && h.evidence_ref
+        page: typeof h.sourceRef === 'object' && h.sourceRef
+          ? (h.sourceRef as Record<string, unknown>).page as number | undefined
+          : typeof h.evidence_ref === 'object' && h.evidence_ref
           ? (h.evidence_ref as Record<string, unknown>).page as number | undefined
           : undefined,
-        quote: typeof h.evidence_ref === 'object' && h.evidence_ref
+        quote: typeof h.sourceRef === 'object' && h.sourceRef
+          ? (h.sourceRef as Record<string, unknown>).quote as string | undefined
+          : typeof h.evidence_ref === 'object' && h.evidence_ref
           ? (h.evidence_ref as Record<string, unknown>).quote as string | undefined
           : undefined,
       },
@@ -227,10 +276,14 @@ function normalizeProductivityPayload(parsed: Record<string, unknown>): Producti
     concerns: concerns.map((c: Record<string, unknown>) => ({
       text: String(c.text || ''),
       sourceRef: {
-        page: typeof c.evidence_ref === 'object' && c.evidence_ref
+        page: typeof c.sourceRef === 'object' && c.sourceRef
+          ? (c.sourceRef as Record<string, unknown>).page as number | undefined
+          : typeof c.evidence_ref === 'object' && c.evidence_ref
           ? (c.evidence_ref as Record<string, unknown>).page as number | undefined
           : undefined,
-        quote: typeof c.evidence_ref === 'object' && c.evidence_ref
+        quote: typeof c.sourceRef === 'object' && c.sourceRef
+          ? (c.sourceRef as Record<string, unknown>).quote as string | undefined
+          : typeof c.evidence_ref === 'object' && c.evidence_ref
           ? (c.evidence_ref as Record<string, unknown>).quote as string | undefined
           : undefined,
       },
@@ -281,5 +334,79 @@ function normalizeMinutesPayload(parsed: Record<string, unknown>): MinutesExtrac
           : undefined,
       },
     })),
+  };
+}
+
+function normalizeAbsencePayload(parsed: Record<string, unknown>): AbsenceExtraction {
+  const personAbsences = Array.isArray(parsed.personAbsences) ? parsed.personAbsences : [];
+  const periodSummary = parsed.periodSummary as Record<string, unknown> | undefined;
+
+  // Valid absence types
+  const validTypes: AbsenceType[] = ['SICK', 'ANL', 'WELL', 'ALT', 'OTHER'];
+
+  // Normalize absence type
+  const normalizeAbsenceType = (type: unknown): AbsenceType => {
+    const typeStr = String(type || '').toUpperCase();
+    if (validTypes.includes(typeStr as AbsenceType)) {
+      return typeStr as AbsenceType;
+    }
+    // Map common variations
+    if (typeStr.includes('SICK') || typeStr.includes('ILL')) return 'SICK';
+    if (typeStr.includes('ANNUAL') || typeStr.includes('VACATION') || typeStr.includes('HOLIDAY')) return 'ANL';
+    if (typeStr.includes('WELL')) return 'WELL';
+    if (typeStr.includes('LIEU') || typeStr.includes('TOIL') || typeStr.includes('ALT')) return 'ALT';
+    return 'OTHER';
+  };
+
+  // Build person absences array
+  const normalizedAbsences = personAbsences.map((a: Record<string, unknown>) => ({
+    personName: String(a.personName || a.person_name || ''),
+    absenceType: normalizeAbsenceType(a.absenceType || a.absence_type || a.type),
+    days: parseFloat(String(a.days || '0')) || 0,
+    startDate: a.startDate || a.start_date ? String(a.startDate || a.start_date) : undefined,
+    endDate: a.endDate || a.end_date ? String(a.endDate || a.end_date) : undefined,
+    sourceRef: {
+      row: typeof a.sourceRef === 'object' && a.sourceRef
+        ? (a.sourceRef as Record<string, unknown>).row as number | undefined
+        : undefined,
+      quote: typeof a.sourceRef === 'object' && a.sourceRef
+        ? (a.sourceRef as Record<string, unknown>).quote as string | undefined
+        : undefined,
+    },
+  }));
+
+  // Calculate summary by type
+  const byType: Record<AbsenceType, number> = {
+    SICK: 0,
+    ANL: 0,
+    WELL: 0,
+    ALT: 0,
+    OTHER: 0,
+  };
+
+  normalizedAbsences.forEach((a) => {
+    byType[a.absenceType] += a.days;
+  });
+
+  const totalAbsenceDays = Object.values(byType).reduce((sum, val) => sum + val, 0);
+
+  return {
+    periodSummary: {
+      totalAbsenceDays: periodSummary?.totalAbsenceDays
+        ? parseFloat(String(periodSummary.totalAbsenceDays))
+        : totalAbsenceDays,
+      byType: periodSummary?.byType
+        ? {
+            SICK: parseFloat(String((periodSummary.byType as Record<string, unknown>).SICK || '0')) || byType.SICK,
+            ANL: parseFloat(String((periodSummary.byType as Record<string, unknown>).ANL || '0')) || byType.ANL,
+            WELL: parseFloat(String((periodSummary.byType as Record<string, unknown>).WELL || '0')) || byType.WELL,
+            ALT: parseFloat(String((periodSummary.byType as Record<string, unknown>).ALT || '0')) || byType.ALT,
+            OTHER: parseFloat(String((periodSummary.byType as Record<string, unknown>).OTHER || '0')) || byType.OTHER,
+          }
+        : byType,
+    },
+    personAbsences: normalizedAbsences,
+    workingDaysInPeriod: parseFloat(String(parsed.workingDaysInPeriod || '22')) || 22,
+    publicHolidaysInPeriod: parseFloat(String(parsed.publicHolidaysInPeriod || '0')) || 0,
   };
 }

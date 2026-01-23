@@ -7,6 +7,7 @@ import {
   FinanceExtraction,
   ProductivityExtraction,
   MinutesExtraction,
+  AbsenceExtraction,
 } from '@/lib/types';
 import { Timestamp } from 'firebase-admin/firestore';
 import { v4 as uuidv4 } from 'uuid';
@@ -20,7 +21,7 @@ export async function saveExtraction(
   artefactId: string,
   periodId: string,
   kind: ExtractionKind,
-  payload: FinanceExtraction | ProductivityExtraction | MinutesExtraction
+  payload: FinanceExtraction | ProductivityExtraction | MinutesExtraction | AbsenceExtraction
 ): Promise<{ success: boolean; extractionId?: string; error?: string }> {
   const db = getAdminFirestore();
 
