@@ -18,7 +18,7 @@ export function getOpenAIClient(): OpenAI {
 
 // Model configuration
 export const OPENAI_CONFIG = {
-  model: 'gpt-4-turbo-preview',
+  model: 'gpt-4o',
   temperature: 0.3, // Lower temperature for more factual outputs
   maxTokens: 4096,
 } as const;
