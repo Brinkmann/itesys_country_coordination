@@ -95,9 +95,10 @@ Generate these sections with German titles:
    - Name of highest performer with their %
    - Name of lowest performer under target (if any) with their %
    - IF input.absence exists AND has personAbsences: mention notable absences by looking up absence data
+   - Include a short absence summary by type (SICK/ANL/WELL/ALT) with total days when absence data is present
    - Mention "Hoher Krankenstand" if someone has 3+ days sick leave
    - Provide a short causal link when notable absences are present (e.g., "beeinflusst Gesamtproduktivität")
-   Example: "Team-Auslastung im Dezember bei 82% (Vormonat: 78%, 3-Monats-Trend: ↑). Callum Herbert mit höchster Chargeability (73%), Catherine Zhao unter Ziel (54%). Hoher Krankenstand bei M. Monera (3 Tage Krank) beeinflusst Gesamtproduktivität."
+   Example: "Team-Auslastung im Dezember bei 82% (Vormonat: 78%, 3-Monats-Trend: ↑). Callum Herbert mit höchster Chargeability (73%), Catherine Zhao unter Ziel (54%). Hoher Krankenstand bei M. Monera (3 Tage Krank) beeinflusst Gesamtproduktivität. Abwesenheiten: 6 Tage (3 Krank, 2 Urlaub, 1 Wellness)."
 
    THEN: One bullet for EACH person from productivity.personMetrics (list ALL names):
    Format: "{Name}: {chargeableHours} Std. abrechenbar, {internalHours} Std. intern, {totalProductiveHours} Std. gesamt ({chargeabilityPercent}%)"
@@ -105,6 +106,7 @@ Generate these sections with German titles:
    CRITICAL: For each person, LOOK UP their absences in input.absence[].personAbsences by matching personName.
    If they have absence entries, APPEND: " - Abwesend: {totalDays} Tage ({types})"
    Combine multiple absence types: e.g., "3 Tage (1 Krank, 2 Wellness)"
+   If a person has no absence entry, APPEND: " - Abwesend: 0 Tage"
 
    THEN: If there are people present in input.absence[].personAbsences who do NOT appear in productivity.personMetrics,
    add a sub-list with the label "Abwesenheiten ohne Protime-Datensatz:" and include one bullet per person:
