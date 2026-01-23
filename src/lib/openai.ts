@@ -91,10 +91,13 @@ Generate these sections with German titles:
 
    FIRST BULLET: A 2-3 sentence narrative summary that MUST include:
    - Team chargeability % with MoM comparison (from productivity.teamMetrics)
+   - 3-month trend direction if prior_periods.trend_periods has productivity data (use ↑, ↓, →)
    - Name of highest performer with their %
+   - Name of lowest performer under target (if any) with their %
    - IF input.absence exists AND has personAbsences: mention notable absences by looking up absence data
-   - Only mention "Hoher Krankenstand" if someone has 5+ days sick leave (not less)
-   Example: "Team-Auslastung im Dezember bei 78% (Vormonat: 82%, 3-Monats-Trend: stabil). Callum Herbert mit höchster Chargeability (73%). Hoher Krankenstand bei C. Zhao (5 Tage Krank)."
+   - Mention "Hoher Krankenstand" if someone has 3+ days sick leave
+   - Provide a short causal link when notable absences are present (e.g., "beeinflusst Gesamtproduktivität")
+   Example: "Team-Auslastung im Dezember bei 82% (Vormonat: 78%, 3-Monats-Trend: ↑). Callum Herbert mit höchster Chargeability (73%), Catherine Zhao unter Ziel (54%). Hoher Krankenstand bei M. Monera (3 Tage Krank) beeinflusst Gesamtproduktivität."
 
    THEN: One bullet for EACH person from productivity.personMetrics (list ALL names):
    Format: "{Name}: {chargeableHours} Std. abrechenbar, {internalHours} Std. intern, {totalProductiveHours} Std. gesamt ({chargeabilityPercent}%)"
@@ -102,6 +105,10 @@ Generate these sections with German titles:
    CRITICAL: For each person, LOOK UP their absences in input.absence[].personAbsences by matching personName.
    If they have absence entries, APPEND: " - Abwesend: {totalDays} Tage ({types})"
    Combine multiple absence types: e.g., "3 Tage (1 Krank, 2 Wellness)"
+
+   THEN: If there are people present in input.absence[].personAbsences who do NOT appear in productivity.personMetrics,
+   add a sub-list with the label "Abwesenheiten ohne Protime-Datensatz:" and include one bullet per person:
+   Format: "{Name}: Abwesend {totalDays} Tage ({types})"
 
    Absence type translations (only these 4 types exist, no "Andere"):
    - SICK=Krank, ANL=Urlaub, WELL=Wellness, ALT=Zeitausgleich
@@ -117,6 +124,7 @@ Generate these sections with German titles:
    - HR-related items
    - Team changes, hiring, departures
    - Absence summary by type: "Abwesenheiten gesamt: X Tage (Y Krank, Z Urlaub, W Wellness)"
+   - If absence-only people exist, you MAY also mention a short line: "Abwesenheiten ohne Protime-Datensatz: {names}"
    - Only include if HR or absence data is present
 
 agenda_model schema
