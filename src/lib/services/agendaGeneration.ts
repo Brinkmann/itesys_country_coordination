@@ -9,6 +9,8 @@ import {
   ActionItem,
   AgendaModel,
   AgendaSection,
+  AbsenceExtraction,
+  AbsenceType,
   Extraction,
   EvidenceRef,
   FinanceExtraction as TypedFinanceExtraction,
@@ -38,19 +40,28 @@ interface FinanceExtraction {
 }
 
 interface ProductivityExtraction {
-  metrics: Array<{
-    name: string;
-    value: string;
-    change: string | null;
-    evidence_ref: { page: number | null; quote: string };
+  teamMetrics: {
+    chargeableHours: number;
+    internalHours: number;
+    totalProductiveHours: number;
+    chargeabilityPercent: number;
+    sourceRef: { page: number | null; quote: string };
+  };
+  personMetrics: Array<{
+    personName: string;
+    chargeableHours: number;
+    internalHours: number;
+    totalProductiveHours: number;
+    chargeabilityPercent: number;
+    sourceRef: { row: number | null; quote: string };
   }>;
   highlights: Array<{
     text: string;
-    evidence_ref: { page: number | null; quote: string };
+    sourceRef: { page: number | null; quote: string };
   }>;
   concerns: Array<{
     text: string;
-    evidence_ref: { page: number | null; quote: string };
+    sourceRef: { page: number | null; quote: string };
   }>;
 }
 
@@ -70,6 +81,23 @@ interface MinutesExtraction {
     due_date: string | null;
     evidence_ref: { page: number | null; quote: string };
   }>;
+}
+
+interface AbsenceByPerson {
+  personName: string;
+  totalDays: number;
+  byType: Record<AbsenceType, number>;
+  evidence_refs: EvidenceRef[];
+}
+
+type ProductivityPersonWithAbsence = ProductivityExtraction['personMetrics'][number] & {
+  absence?: AbsenceByPerson | null;
+};
+
+interface PriorAgendaSummary {
+  period: string;
+  period_label: string;
+  finance_summary: string[];
 }
 
 /**
@@ -236,6 +264,7 @@ export async function generateAgenda(
   factsOnly: boolean = true,
   userId: string
 ): Promise<{ success: boolean; agendaId?: string; error?: string }> {
+  const client = getOpenAIClient();
   try {
     const db = getAdminFirestore();
 
@@ -284,61 +313,127 @@ export async function generateAgenda(
     const allPriorPeriodIds = [...new Set([...priorPeriodIds, ...fyPeriodIds])];
 
     // Fetch prior finance, productivity, and absence extractions
-    const priorFinanceExtractions = await getExtractionsForPeriods(allPriorPeriodIds, 'finance');
-    const priorProductivityExtractions = await getExtractionsForPeriods(allPriorPeriodIds, 'productivity');
-    const priorAbsenceExtractions = await getExtractionsForPeriods(allPriorPeriodIds, 'absence');
-
     // Fetch current period absence extractions
     const currentAbsenceExtractions = await getExtractionsForPeriods([periodId], 'absence');
 
-    // Build prior period comparison data
+    const normalizeName = (name: string) => name.trim().toLowerCase();
+
+    const absenceByPersonMap = new Map<string, AbsenceByPerson>();
+    const absenceTotalsByType: Record<AbsenceType, number> = {
+      SICK: 0,
+      ANL: 0,
+      WELL: 0,
+      ALT: 0,
+    };
+
+    for (const extraction of currentAbsenceExtractions) {
+      const payload = extraction.payload as AbsenceExtraction;
+      if (!payload?.personAbsences) continue;
+
+      for (const record of payload.personAbsences) {
+        const normalizedName = normalizeName(record.personName);
+        if (!normalizedName) continue;
+
+        const existing = absenceByPersonMap.get(normalizedName);
+        const evidenceRef: EvidenceRef = {
+          artefact_id: extraction.artefactId,
+          page: null,
+          quote: record.sourceRef?.quote ?? (record.sourceRef?.row ? `Row ${record.sourceRef.row}` : null),
+        };
+
+        if (!existing) {
+          absenceByPersonMap.set(normalizedName, {
+            personName: record.personName,
+            totalDays: record.days,
+            byType: {
+              SICK: record.absenceType === 'SICK' ? record.days : 0,
+              ANL: record.absenceType === 'ANL' ? record.days : 0,
+              WELL: record.absenceType === 'WELL' ? record.days : 0,
+              ALT: record.absenceType === 'ALT' ? record.days : 0,
+            },
+            evidence_refs: [evidenceRef],
+          });
+        } else {
+          existing.totalDays += record.days;
+          existing.byType[record.absenceType] += record.days;
+          existing.evidence_refs.push(evidenceRef);
+        }
+
+        absenceTotalsByType[record.absenceType] += record.days;
+      }
+    }
+
+    const absenceByPerson = Array.from(absenceByPersonMap.values()).map((entry) => ({
+      ...entry,
+      totalDays: Math.round(entry.totalDays * 10) / 10,
+      byType: {
+        SICK: Math.round(entry.byType.SICK * 10) / 10,
+        ANL: Math.round(entry.byType.ANL * 10) / 10,
+        WELL: Math.round(entry.byType.WELL * 10) / 10,
+        ALT: Math.round(entry.byType.ALT * 10) / 10,
+      },
+    }));
+
+    const absenceSummary = {
+      totalAbsenceDays: Math.round(Object.values(absenceTotalsByType).reduce((sum, val) => sum + val, 0) * 10) / 10,
+      byType: {
+        SICK: Math.round(absenceTotalsByType.SICK * 10) / 10,
+        ANL: Math.round(absenceTotalsByType.ANL * 10) / 10,
+        WELL: Math.round(absenceTotalsByType.WELL * 10) / 10,
+        ALT: Math.round(absenceTotalsByType.ALT * 10) / 10,
+      },
+    };
+
+    const absenceByPersonLookup = new Map(
+      absenceByPerson.map((person) => [normalizeName(person.personName), person])
+    );
+
+    const productivityPeople = new Set(
+      productivityExtractions.flatMap((extraction) =>
+        extraction.data.personMetrics.map((person) => normalizeName(person.personName))
+      )
+    );
+    const absenceOnlyPeople = absenceByPerson
+      .filter((person) => !productivityPeople.has(normalizeName(person.personName)))
+      .map((person) => person.personName);
+
+    const trimBullet = (text: string, maxLength = 220) =>
+      text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+
+    const priorAgendaSummaries: PriorAgendaSummary[] = [];
+    for (const pid of priorPeriodIds.slice(0, 2)) {
+      const priorAgenda = await getLatestAgenda(pid);
+      if (!priorAgenda?.contentJson?.sections) continue;
+      const financeSection = priorAgenda.contentJson.sections.find((section) => section.key === 'finance');
+      if (!financeSection) continue;
+      priorAgendaSummaries.push({
+        period: pid,
+        period_label: formatPeriodLabel(pid),
+        finance_summary: financeSection.bullets.map((bullet) => trimBullet(bullet.text)).slice(0, 5),
+      });
+    }
+
+    // Build prior period comparison data (lightweight metadata only)
     const priorPeriodData = {
-      // Previous month data for MoM comparison
       previous_month: priorPeriodIds[0] ? {
         period: priorPeriodIds[0],
         period_label: formatPeriodLabel(priorPeriodIds[0]),
-        finance: priorFinanceExtractions
-          .filter(e => e.periodId === priorPeriodIds[0])
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
-        productivity: priorProductivityExtractions
-          .filter(e => e.periodId === priorPeriodIds[0])
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
-        absence: priorAbsenceExtractions
-          .filter(e => e.periodId === priorPeriodIds[0])
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
+        finance: [],
+        productivity: [],
+        absence: [],
       } : null,
-      // FY to date aggregated metrics
-      fy_periods: fyPeriodIds.map(pid => ({
-        period: pid,
-        period_label: formatPeriodLabel(pid),
-        finance: priorFinanceExtractions
-          .filter(e => e.periodId === pid)
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
-        productivity: priorProductivityExtractions
-          .filter(e => e.periodId === pid)
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
-        absence: priorAbsenceExtractions
-          .filter(e => e.periodId === pid)
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
-      })),
-      // Last 3 months trend data
+      fy_periods: [],
       trend_periods: priorPeriodIds.map(pid => ({
         period: pid,
         period_label: formatPeriodLabel(pid),
-        finance: priorFinanceExtractions
-          .filter(e => e.periodId === pid)
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
-        productivity: priorProductivityExtractions
-          .filter(e => e.periodId === pid)
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
-        absence: priorAbsenceExtractions
-          .filter(e => e.periodId === pid)
-          .map(e => ({ extraction_id: e.id, ...e.payload })),
+        finance: [],
+        productivity: [],
+        absence: [],
       })),
     };
 
     // Build input payload for agenda generation
-    const inputPayload = {
+    const basePayload = {
       period: periodId,
       period_label: formatPeriodLabel(periodId),
       language,
@@ -350,12 +445,20 @@ export async function generateAgenda(
       productivity: productivityExtractions.map((e) => ({
         artefact_id: e.artefactId,
         ...e.data,
+        personMetrics: e.data.personMetrics.map((person): ProductivityPersonWithAbsence => ({
+          ...person,
+          absence: absenceByPersonLookup.get(normalizeName(person.personName)) ?? null,
+        })),
       })),
       // Current period absence data for utilization calculation
       absence: currentAbsenceExtractions.map((e) => ({
         extraction_id: e.id,
+        artefact_id: e.artefactId,
         ...e.payload,
       })),
+      absence_summary: absenceSummary,
+      absence_by_person: absenceByPerson,
+      absence_only_people: absenceOnlyPeople,
       minutes: minutesExtractions.map((e) => ({
         artefact_id: e.artefactId,
         ...e.data,
@@ -370,31 +473,44 @@ export async function generateAgenda(
       })),
       // Cross-period comparison data
       prior_periods: priorPeriodData,
+      prior_agenda_summaries: priorAgendaSummaries,
     };
 
-    // Generate agenda
-    const client = getOpenAIClient();
+    const requestAgenda = async (sectionScope: AgendaSection['key'][]) => {
+      const response = await client.chat.completions.create({
+        model: OPENAI_CONFIG.model,
+        temperature: OPENAI_CONFIG.temperature,
+        max_tokens: OPENAI_CONFIG.maxTokens,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPTS.AGENDA_GENERATOR },
+          {
+            role: 'user',
+            content: JSON.stringify({ ...basePayload, section_scope: sectionScope }),
+          },
+        ],
+        response_format: { type: 'json_object' },
+      });
 
-    const response = await client.chat.completions.create({
-      model: OPENAI_CONFIG.model,
-      temperature: OPENAI_CONFIG.temperature,
-      max_tokens: OPENAI_CONFIG.maxTokens,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPTS.AGENDA_GENERATOR },
-        {
-          role: 'user',
-          content: JSON.stringify(inputPayload),
-        },
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        throw new Error('No response from AI');
+      }
+
+      return JSON.parse(content) as AgendaModel;
+    };
+
+    const productivityAgenda = await requestAgenda(['productivity', 'people']);
+    const coreAgenda = await requestAgenda(['actions', 'finance', 'hot_topics']);
+
+    const agendaModel: AgendaModel = {
+      period: basePayload.period,
+      language: 'de',
+      facts_only: basePayload.facts_only,
+      sections: [
+        ...coreAgenda.sections,
+        ...productivityAgenda.sections,
       ],
-      response_format: { type: 'json_object' },
-    });
-
-    const content = response.choices[0]?.message?.content;
-    if (!content) {
-      return { success: false, error: 'No response from AI' };
-    }
-
-    const agendaModel = JSON.parse(content) as AgendaModel;
+    };
 
     // Convert to markdown
     const markdownContent = agendaModelToMarkdown(agendaModel);

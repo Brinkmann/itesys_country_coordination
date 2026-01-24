@@ -12,7 +12,7 @@ import { extractTextFromArtefact } from '@/lib/services/textExtraction';
 import { extractMetricsFromText } from '@/lib/services/metricsExtraction';
 import { generateAgenda, getLatestAgenda } from '@/lib/services/agendaGeneration';
 import { uploadFileToSignedUrl } from '@/lib/services/storageUpload';
-import { Period, Artefact, ActionItem, ArtefactType, AgendaModel, formatPeriodLabel } from '@/lib/types';
+import { Period, Artefact, ActionItem, ArtefactType, AgendaModel, AbsenceType, formatPeriodLabel } from '@/lib/types';
 
 type ArtefactTabKey = 'finance' | 'productivity' | 'absence' | 'minutes' | 'other';
 type TabKey = ArtefactTabKey | 'agenda' | 'actions';
@@ -42,7 +42,7 @@ export default function PeriodWorkspacePage() {
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [agenda, setAgenda] = useState<{ contentJson: AgendaModel; contentMd: string; status: string } | null>(null);
-  const [extractionPreviews, setExtractionPreviews] = useState<string[]>([]);
+  const [absenceSummaryFacts, setAbsenceSummaryFacts] = useState<Array<{ id: string; title: string; details: string }>>([]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -84,17 +84,7 @@ export default function PeriodWorkspacePage() {
         });
       }
 
-      // Generate preview snippets from parsed text
-      const previews: string[] = [];
-      for (const art of artefactsData) {
-        if (art.parsedText && previews.length < 3) {
-          const snippet = art.parsedText.slice(0, 200).trim();
-          if (snippet) {
-            previews.push(`From ${art.filename}: "${snippet}..."`);
-          }
-        }
-      }
-      setExtractionPreviews(previews);
+      setAbsenceSummaryFacts(buildAbsenceSummaryFacts(artefactsData));
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -428,6 +418,7 @@ export default function PeriodWorkspacePage() {
                 onDelete={handleDeleteArtefact}
                 uploading={uploading}
                 accept={tab.accept}
+                absenceSummaryFacts={absenceSummaryFacts}
               />
             ) : null
           )}
@@ -452,24 +443,6 @@ export default function PeriodWorkspacePage() {
         </div>
 
         <div className="workspace-sidebar">
-          <div className="preview-panel">
-            <div className="preview-panel-header">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-              </svg>
-              DOCUMENT PREVIEW
-            </div>
-            <div className="preview-panel-content">
-              {extractionPreviews.length === 0 ? (
-                <p style={{ color: '#9ca3af' }}>Upload documents to see extracted content previews.</p>
-              ) : (
-                extractionPreviews.map((preview, i) => (
-                  <p key={i} style={{ fontSize: 13, marginBottom: 12 }}>{preview}</p>
-                ))
-              )}
-            </div>
-          </div>
-
           <div className="actions-panel">
             <div className="preview-panel-header">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -501,6 +474,77 @@ export default function PeriodWorkspacePage() {
   );
 }
 
+function formatAbsenceValue(value: number) {
+  return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
+}
+
+function buildAbsenceSummaryFacts(
+  artefacts: Artefact[]
+): Array<{ id: string; title: string; details: string }> {
+  const totals = new Map<string, Record<AbsenceType, number>>();
+
+  const normalizeName = (name: string) => name.replace(/\s+/g, ' ').trim();
+  const extractField = (line: string, label: string) => {
+    const match = new RegExp(`${label}:\\s*([^,]+)`, 'i').exec(line);
+    return match?.[1]?.trim();
+  };
+
+  const mapAbsenceType = (line: string): AbsenceType | null => {
+    const codeMatch = /\b(SICK|ANL|WELL|ALT)\b/i.exec(line);
+    if (codeMatch) {
+      return codeMatch[1].toUpperCase() as AbsenceType;
+    }
+    if (/Sick Day/i.test(line)) return 'SICK';
+    if (/Annual Leave Day/i.test(line)) return 'ANL';
+    if (/Duvet Day/i.test(line)) return 'WELL';
+    if (/Day in Lieu/i.test(line)) return 'ALT';
+    return null;
+  };
+
+  const parseHours = (line: string) => {
+    const match = /\b(?:HOURS?|HRS?)\b:\s*([0-9]+(?:\.[0-9]+)?)/i.exec(line);
+    return match ? parseFloat(match[1]) : null;
+  };
+
+  for (const artefact of artefacts) {
+    if (artefact.type !== 'absence' || !artefact.parsedText) continue;
+    const lines = artefact.parsedText.split('\n');
+    for (const line of lines) {
+      if (!/Row\s+\d+:/i.test(line)) continue;
+      const hours = parseHours(line);
+      if (!hours) continue;
+
+      const name = extractField(line, 'USER') ?? extractField(line, 'NAME') ?? extractField(line, 'EMPLOYEE');
+      if (!name) continue;
+
+      const absenceType = mapAbsenceType(line);
+      if (!absenceType) continue;
+
+      const normalizedName = normalizeName(name);
+      const existing = totals.get(normalizedName) ?? { SICK: 0, ANL: 0, WELL: 0, ALT: 0 };
+      existing[absenceType] += hours;
+      totals.set(normalizedName, existing);
+    }
+  }
+
+  const entries = Array.from(totals.entries()).sort(([a], [b]) => a.localeCompare(b));
+  return entries.map(([name, byType]) => {
+    const parts = (['SICK', 'ANL', 'WELL', 'ALT'] as AbsenceType[])
+      .filter((type) => byType[type] > 0)
+      .map((type) => {
+        const hours = byType[type];
+        const days = hours / 8;
+        return `${type} ${formatAbsenceValue(days)} Tage (${formatAbsenceValue(hours)} Std.)`;
+      });
+
+    return {
+      id: name,
+      title: name,
+      details: parts.join(', '),
+    };
+  });
+}
+
 function ArtefactSection({
   title,
   description,
@@ -510,6 +554,7 @@ function ArtefactSection({
   onDelete,
   uploading,
   accept,
+  absenceSummaryFacts,
 }: {
   title: string;
   description: string;
@@ -519,8 +564,19 @@ function ArtefactSection({
   onDelete: (id: string) => void;
   uploading: boolean;
   accept?: string;
+  absenceSummaryFacts: Array<{ id: string; title: string; details: string }>;
 }) {
   const [dragover, setDragover] = useState(false);
+  const summaryFacts = type === 'absence'
+    ? absenceSummaryFacts
+    : artefacts
+        .filter((artefact) => artefact.parsedText)
+        .map((artefact) => ({
+          id: artefact.id,
+          title: artefact.filename || 'Document',
+          details: `${artefact.parsedText?.slice(0, 220).trim()}...`,
+        }))
+        .slice(0, 4);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -622,6 +678,32 @@ function ArtefactSection({
         </div>
         <h3>Upload {title}</h3>
         <p>{description}</p>
+      </div>
+
+      <div className="summary-panel">
+        <div className="summary-panel-header">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M8 6h13" />
+            <path d="M8 12h13" />
+            <path d="M8 18h13" />
+            <circle cx="4" cy="6" r="1.5" />
+            <circle cx="4" cy="12" r="1.5" />
+            <circle cx="4" cy="18" r="1.5" />
+          </svg>
+          KEY SUMMARY FACTS
+        </div>
+        <div className="summary-panel-content">
+          {summaryFacts.length === 0 ? (
+            <p style={{ color: '#9ca3af' }}>Upload documents to see extracted summary facts.</p>
+          ) : (
+            summaryFacts.map((fact) => (
+              <div key={fact.id} className="summary-fact">
+                <div className="summary-fact-title">{fact.title}</div>
+                <p>{fact.details}</p>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );
