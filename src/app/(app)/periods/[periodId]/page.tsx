@@ -493,7 +493,8 @@ function buildAbsenceSummaryFacts(
       const name = record.personName?.trim();
       if (!name) continue;
       const existing = totals.get(name) ?? { SICK: 0, ANL: 0, WELL: 0, ALT: 0 };
-      existing[record.absenceType] += record.days;
+      const hours = record.days * 8;
+      existing[record.absenceType] += hours;
       totals.set(name, existing);
     }
   }
@@ -503,8 +504,8 @@ function buildAbsenceSummaryFacts(
     const parts = (['SICK', 'ANL', 'WELL', 'ALT'] as AbsenceType[])
       .filter((type) => byType[type] > 0)
       .map((type) => {
-        const days = byType[type];
-        const hours = days * 8;
+        const hours = byType[type];
+        const days = hours / 8;
         return `${type} ${formatAbsenceValue(days)} Tage (${formatAbsenceValue(hours)} Std.)`;
       });
 
