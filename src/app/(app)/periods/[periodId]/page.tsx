@@ -42,7 +42,6 @@ export default function PeriodWorkspacePage() {
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [agenda, setAgenda] = useState<{ contentJson: AgendaModel; contentMd: string; status: string } | null>(null);
-  const [extractionPreviews, setExtractionPreviews] = useState<string[]>([]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -84,17 +83,6 @@ export default function PeriodWorkspacePage() {
         });
       }
 
-      // Generate preview snippets from parsed text
-      const previews: string[] = [];
-      for (const art of artefactsData) {
-        if (art.parsedText && previews.length < 3) {
-          const snippet = art.parsedText.slice(0, 200).trim();
-          if (snippet) {
-            previews.push(`From ${art.filename}: "${snippet}..."`);
-          }
-        }
-      }
-      setExtractionPreviews(previews);
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -452,24 +440,6 @@ export default function PeriodWorkspacePage() {
         </div>
 
         <div className="workspace-sidebar">
-          <div className="preview-panel">
-            <div className="preview-panel-header">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-              </svg>
-              DOCUMENT PREVIEW
-            </div>
-            <div className="preview-panel-content">
-              {extractionPreviews.length === 0 ? (
-                <p style={{ color: '#9ca3af' }}>Upload documents to see extracted content previews.</p>
-              ) : (
-                extractionPreviews.map((preview, i) => (
-                  <p key={i} style={{ fontSize: 13, marginBottom: 12 }}>{preview}</p>
-                ))
-              )}
-            </div>
-          </div>
-
           <div className="actions-panel">
             <div className="preview-panel-header">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -521,6 +491,14 @@ function ArtefactSection({
   accept?: string;
 }) {
   const [dragover, setDragover] = useState(false);
+  const summaryFacts = artefacts
+    .filter((artefact) => artefact.parsedText)
+    .map((artefact) => ({
+      id: artefact.id,
+      filename: artefact.filename || 'Document',
+      snippet: `${artefact.parsedText?.slice(0, 220).trim()}...`,
+    }))
+    .slice(0, 4);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -622,6 +600,32 @@ function ArtefactSection({
         </div>
         <h3>Upload {title}</h3>
         <p>{description}</p>
+      </div>
+
+      <div className="summary-panel">
+        <div className="summary-panel-header">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M8 6h13" />
+            <path d="M8 12h13" />
+            <path d="M8 18h13" />
+            <circle cx="4" cy="6" r="1.5" />
+            <circle cx="4" cy="12" r="1.5" />
+            <circle cx="4" cy="18" r="1.5" />
+          </svg>
+          KEY SUMMARY FACTS
+        </div>
+        <div className="summary-panel-content">
+          {summaryFacts.length === 0 ? (
+            <p style={{ color: '#9ca3af' }}>Upload documents to see extracted summary facts.</p>
+          ) : (
+            summaryFacts.map((fact) => (
+              <div key={fact.id} className="summary-fact">
+                <div className="summary-fact-title">{fact.filename}</div>
+                <p>{fact.snippet}</p>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

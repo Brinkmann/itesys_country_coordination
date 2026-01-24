@@ -222,7 +222,7 @@ a {
 .upload-zone {
   border: 2px dashed #e5e7eb;
   border-radius: 12px;
-  padding: 48px 24px;
+  padding: 24px 20px;
   text-align: center;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -240,9 +240,9 @@ a {
 }
 
 .upload-zone-icon {
-  width: 48px;
-  height: 48px;
-  margin: 0 auto 16px;
+  width: 36px;
+  height: 36px;
+  margin: 0 auto 12px;
   color: #9ca3af;
 }
 
@@ -250,12 +250,48 @@ a {
   font-size: 16px;
   font-weight: 500;
   color: #1a1a1a;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .upload-zone p {
   font-size: 13px;
   color: #6b7280;
+}
+
+.summary-panel {
+  margin-top: 20px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.summary-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+  padding: 12px 16px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.summary-panel-content {
+  padding: 14px 16px 6px;
+  font-size: 13px;
+  color: #374151;
+}
+
+.summary-fact {
+  margin-bottom: 12px;
+}
+
+.summary-fact-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  margin-bottom: 4px;
 }
 
 /* Period Card */
