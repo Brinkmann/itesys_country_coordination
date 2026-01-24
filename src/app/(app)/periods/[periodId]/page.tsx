@@ -12,8 +12,7 @@ import { extractTextFromArtefact } from '@/lib/services/textExtraction';
 import { extractMetricsFromText } from '@/lib/services/metricsExtraction';
 import { generateAgenda, getLatestAgenda } from '@/lib/services/agendaGeneration';
 import { uploadFileToSignedUrl } from '@/lib/services/storageUpload';
-import { getExtractionsByKind } from '@/lib/actions/extractions';
-import { Period, Artefact, ActionItem, ArtefactType, AgendaModel, AbsenceExtraction, AbsenceType, formatPeriodLabel } from '@/lib/types';
+import { Period, Artefact, ActionItem, ArtefactType, AgendaModel, AbsenceType, formatPeriodLabel } from '@/lib/types';
 
 type ArtefactTabKey = 'finance' | 'productivity' | 'absence' | 'minutes' | 'other';
 type TabKey = ArtefactTabKey | 'agenda' | 'actions';
@@ -59,13 +58,12 @@ export default function PeriodWorkspacePage() {
   const loadData = useCallback(async () => {
     setDataLoading(true);
     try {
-      const [periodData, artefactsData, actionsData, carryOverData, agendaData, absenceExtractions] = await Promise.all([
+      const [periodData, artefactsData, actionsData, carryOverData, agendaData] = await Promise.all([
         getPeriod(periodId),
         getArtefactsByPeriod(periodId),
         getActionsByPeriod(periodId),
         getCarryOverActions(periodId),
         getLatestAgenda(periodId),
-        getExtractionsByKind(periodId, 'absence'),
       ]);
 
       if (!periodData) {
@@ -86,7 +84,7 @@ export default function PeriodWorkspacePage() {
         });
       }
 
-      setAbsenceSummaryFacts(buildAbsenceSummaryFacts(absenceExtractions ?? []));
+      setAbsenceSummaryFacts(buildAbsenceSummaryFacts(artefactsData));
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -481,21 +479,51 @@ function formatAbsenceValue(value: number) {
 }
 
 function buildAbsenceSummaryFacts(
-  extractions: Array<{ id: string; payload: unknown }>
+  artefacts: Artefact[]
 ): Array<{ id: string; title: string; details: string }> {
   const totals = new Map<string, Record<AbsenceType, number>>();
 
-  for (const extraction of extractions) {
-    const payload = extraction.payload as AbsenceExtraction;
-    if (!payload?.personAbsences) continue;
+  const normalizeName = (name: string) => name.replace(/\s+/g, ' ').trim();
+  const extractField = (line: string, label: string) => {
+    const match = new RegExp(`${label}:\\s*([^,]+)`, 'i').exec(line);
+    return match?.[1]?.trim();
+  };
 
-    for (const record of payload.personAbsences) {
-      const name = record.personName?.trim();
+  const mapAbsenceType = (line: string): AbsenceType | null => {
+    const codeMatch = /\b(SICK|ANL|WELL|ALT)\b/i.exec(line);
+    if (codeMatch) {
+      return codeMatch[1].toUpperCase() as AbsenceType;
+    }
+    if (/Sick Day/i.test(line)) return 'SICK';
+    if (/Annual Leave Day/i.test(line)) return 'ANL';
+    if (/Duvet Day/i.test(line)) return 'WELL';
+    if (/Day in Lieu/i.test(line)) return 'ALT';
+    return null;
+  };
+
+  const parseHours = (line: string) => {
+    const match = /\b(?:HOURS?|HRS?)\b:\s*([0-9]+(?:\.[0-9]+)?)/i.exec(line);
+    return match ? parseFloat(match[1]) : null;
+  };
+
+  for (const artefact of artefacts) {
+    if (artefact.type !== 'absence' || !artefact.parsedText) continue;
+    const lines = artefact.parsedText.split('\n');
+    for (const line of lines) {
+      if (!/Row\s+\d+:/i.test(line)) continue;
+      const hours = parseHours(line);
+      if (!hours) continue;
+
+      const name = extractField(line, 'USER') ?? extractField(line, 'NAME') ?? extractField(line, 'EMPLOYEE');
       if (!name) continue;
-      const existing = totals.get(name) ?? { SICK: 0, ANL: 0, WELL: 0, ALT: 0 };
-      const hours = record.days * 8;
-      existing[record.absenceType] += hours;
-      totals.set(name, existing);
+
+      const absenceType = mapAbsenceType(line);
+      if (!absenceType) continue;
+
+      const normalizedName = normalizeName(name);
+      const existing = totals.get(normalizedName) ?? { SICK: 0, ANL: 0, WELL: 0, ALT: 0 };
+      existing[absenceType] += hours;
+      totals.set(normalizedName, existing);
     }
   }
 
