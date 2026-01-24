@@ -12,7 +12,8 @@ import { extractTextFromArtefact } from '@/lib/services/textExtraction';
 import { extractMetricsFromText } from '@/lib/services/metricsExtraction';
 import { generateAgenda, getLatestAgenda } from '@/lib/services/agendaGeneration';
 import { uploadFileToSignedUrl } from '@/lib/services/storageUpload';
-import { Period, Artefact, ActionItem, ArtefactType, AgendaModel, formatPeriodLabel } from '@/lib/types';
+import { getExtractionsByKind } from '@/lib/actions/extractions';
+import { Period, Artefact, ActionItem, ArtefactType, AgendaModel, AbsenceExtraction, AbsenceType } from '@/lib/types';
 
 type ArtefactTabKey = 'finance' | 'productivity' | 'absence' | 'minutes' | 'other';
 type TabKey = ArtefactTabKey | 'agenda' | 'actions';
@@ -42,6 +43,7 @@ export default function PeriodWorkspacePage() {
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [agenda, setAgenda] = useState<{ contentJson: AgendaModel; contentMd: string; status: string } | null>(null);
+  const [absenceSummaryFacts, setAbsenceSummaryFacts] = useState<Array<{ id: string; title: string; details: string }>>([]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -57,12 +59,13 @@ export default function PeriodWorkspacePage() {
   const loadData = useCallback(async () => {
     setDataLoading(true);
     try {
-      const [periodData, artefactsData, actionsData, carryOverData, agendaData] = await Promise.all([
+      const [periodData, artefactsData, actionsData, carryOverData, agendaData, absenceExtractions] = await Promise.all([
         getPeriod(periodId),
         getArtefactsByPeriod(periodId),
         getActionsByPeriod(periodId),
         getCarryOverActions(periodId),
         getLatestAgenda(periodId),
+        getExtractionsByKind(periodId, 'absence'),
       ]);
 
       if (!periodData) {
@@ -83,6 +86,7 @@ export default function PeriodWorkspacePage() {
         });
       }
 
+      setAbsenceSummaryFacts(buildAbsenceSummaryFacts(absenceExtractions ?? []));
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -416,6 +420,7 @@ export default function PeriodWorkspacePage() {
                 onDelete={handleDeleteArtefact}
                 uploading={uploading}
                 accept={tab.accept}
+                absenceSummaryFacts={absenceSummaryFacts}
               />
             ) : null
           )}
@@ -471,6 +476,46 @@ export default function PeriodWorkspacePage() {
   );
 }
 
+function formatAbsenceValue(value: number) {
+  return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
+}
+
+function buildAbsenceSummaryFacts(
+  extractions: Array<{ id: string; payload: unknown }>
+): Array<{ id: string; title: string; details: string }> {
+  const totals = new Map<string, Record<AbsenceType, number>>();
+
+  for (const extraction of extractions) {
+    const payload = extraction.payload as AbsenceExtraction;
+    if (!payload?.personAbsences) continue;
+
+    for (const record of payload.personAbsences) {
+      const name = record.personName?.trim();
+      if (!name) continue;
+      const existing = totals.get(name) ?? { SICK: 0, ANL: 0, WELL: 0, ALT: 0 };
+      existing[record.absenceType] += record.days;
+      totals.set(name, existing);
+    }
+  }
+
+  const entries = Array.from(totals.entries()).sort(([a], [b]) => a.localeCompare(b));
+  return entries.map(([name, byType]) => {
+    const parts = (['SICK', 'ANL', 'WELL', 'ALT'] as AbsenceType[])
+      .filter((type) => byType[type] > 0)
+      .map((type) => {
+        const days = byType[type];
+        const hours = days * 8;
+        return `${type} ${formatAbsenceValue(days)} Tage (${formatAbsenceValue(hours)} Std.)`;
+      });
+
+    return {
+      id: name,
+      title: name,
+      details: parts.join(', '),
+    };
+  });
+}
+
 function ArtefactSection({
   title,
   description,
@@ -480,6 +525,7 @@ function ArtefactSection({
   onDelete,
   uploading,
   accept,
+  absenceSummaryFacts,
 }: {
   title: string;
   description: string;
@@ -489,16 +535,19 @@ function ArtefactSection({
   onDelete: (id: string) => void;
   uploading: boolean;
   accept?: string;
+  absenceSummaryFacts: Array<{ id: string; title: string; details: string }>;
 }) {
   const [dragover, setDragover] = useState(false);
-  const summaryFacts = artefacts
-    .filter((artefact) => artefact.parsedText)
-    .map((artefact) => ({
-      id: artefact.id,
-      filename: artefact.filename || 'Document',
-      snippet: `${artefact.parsedText?.slice(0, 220).trim()}...`,
-    }))
-    .slice(0, 4);
+  const summaryFacts = type === 'absence'
+    ? absenceSummaryFacts
+    : artefacts
+        .filter((artefact) => artefact.parsedText)
+        .map((artefact) => ({
+          id: artefact.id,
+          title: artefact.filename || 'Document',
+          details: `${artefact.parsedText?.slice(0, 220).trim()}...`,
+        }))
+        .slice(0, 4);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -620,8 +669,8 @@ function ArtefactSection({
           ) : (
             summaryFacts.map((fact) => (
               <div key={fact.id} className="summary-fact">
-                <div className="summary-fact-title">{fact.filename}</div>
-                <p>{fact.snippet}</p>
+                <div className="summary-fact-title">{fact.title}</div>
+                <p>{fact.details}</p>
               </div>
             ))
           )}
