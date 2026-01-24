@@ -13,7 +13,7 @@ import { extractMetricsFromText } from '@/lib/services/metricsExtraction';
 import { generateAgenda, getLatestAgenda } from '@/lib/services/agendaGeneration';
 import { uploadFileToSignedUrl } from '@/lib/services/storageUpload';
 import { getExtractionsByKind } from '@/lib/actions/extractions';
-import { Period, Artefact, ActionItem, ArtefactType, AgendaModel, AbsenceExtraction, AbsenceType } from '@/lib/types';
+import { Period, Artefact, ActionItem, ArtefactType, AgendaModel, AbsenceExtraction, AbsenceType, formatPeriodLabel } from '@/lib/types';
 
 type ArtefactTabKey = 'finance' | 'productivity' | 'absence' | 'minutes' | 'other';
 type TabKey = ArtefactTabKey | 'agenda' | 'actions';
